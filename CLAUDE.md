@@ -19,6 +19,14 @@ server, and only make claims it supports.
   evidence or leave it out.
 - When you show the candidate a claim, cite the source document, review period, and page or section.
 
+## Committing and pushing
+
+- After the user approves a code change, commit it locally with a clear message.
+- Then show the list of changed files, confirm no private files are included
+  (`settings.yaml`, `.env`, `evidence/`, `style_examples/`, `output/`, `data/`,
+  `Applications.xlsx`, resumes or cover letters), and ask whether to push to GitHub.
+- Never push without the user's "approved".
+
 ## Privacy
 
 - Never modify, move, or commit anything in `evidence/`. It is read-only and git-ignored.
