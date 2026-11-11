@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="topbar"><h2>Creating resumes &amp; cover letters</h2></div>
+<div class="meta">You can leave this page open; it updates by itself. Files go to the output folder, under today's date.</div>
+<div id="sheet"></div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Company</th><th>Role</th><th>Status</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<div class="actions" id="after" hidden>
+  <a class="btn" href="/day/{{ job.run_date }}" style="text-decoration:none">Back to postings</a>
+</div>
+<script>
+  const csrf = {{ csrf|tojson }};
+  function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+  async function openFolder(path) {
+    const body = new URLSearchParams({ csrf, path });
+    await fetch('/open-folder', { method: 'POST', body });
+  }
+  async function poll() {
+    const r = await fetch('/api/job/{{ job_id }}'); const job = await r.json();
+    const results = {};
+    (job.result?.results || []).forEach(x => results[x.uid] = x);
+    document.getElementById('rows').innerHTML = Object.entries(job.items).map(([uid, it]) => {
+      const res = results[uid];
+      const btn = res && res.ok ? `<button class="secondary" data-path="${esc(res.folder)}">Open folder</button>` : '';
+      return `<tr><td>${esc(it.company)}</td><td>${esc(it.title)}</td><td>${esc(it.status)}</td><td>${btn}</td></tr>`;
+    }).join('');
+    document.querySelectorAll('button[data-path]').forEach(b => b.onclick = () => openFolder(b.dataset.path));
+    if (job.done) {
+      const s = job.result?.sheet || {};
+      const el = document.getElementById('sheet');
+      if (job.result?.error) el.innerHTML = `<div class="notice err">${esc(job.result.error)}</div>`;
+      else if (s.ok) el.innerHTML = `<div class="notice ok">All done. Applications.xlsx updated (${s.added || 0} row(s) added).</div>`;
+      else el.innerHTML = `<div class="notice warn">${esc(s.message)}
+          <form method="post" action="/sheet/retry" style="display:inline">
+            <input type="hidden" name="csrf" value="${esc(csrf)}"><input type="hidden" name="run_date" value="{{ job.run_date }}">
+            <button type="submit" class="secondary" style="padding:4px 10px">Try again</button></form></div>`;
+      document.getElementById('after').hidden = false;
+      return;
+    }
+    setTimeout(poll, 3000);
+  }
+  poll();
+</script>
+{% endblock %}

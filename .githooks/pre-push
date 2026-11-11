@@ -1,0 +1,10 @@
+#!/bin/sh
+# Safety net: only the clean "main" branch may be pushed. The local backup of the
+# full development history (local-history-backup) must never leave this Mac.
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$local_ref" in
+    refs/heads/main|"(delete)") ;;
+    *) echo "BLOCKED: only 'main' can be pushed (tried $local_ref)."; exit 1 ;;
+  esac
+done
+exit 0

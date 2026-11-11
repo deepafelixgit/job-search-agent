@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block main %}
+{% set mf = manual_form or {} %}
+<details class="scorebox" open>
+  <summary>Score a posting</summary>
+  <form method="post" action="/score-posting" id="scoreform">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Job posting link
+      <input type="url" name="url" value="{{ mf.url }}" placeholder="https://job-boards.greenhouse.io/company/jobs/123">
+    </label>
+    <label>Job description <span class="sub">(optional: paste it if the link can't be read, or for LinkedIn and Indeed)</span>
+      <textarea name="text" id="pastetext" rows="5" placeholder="Paste the full job description">{{ mf.text }}</textarea>
+    </label>
+    <div class="row4">
+      <label>Company <span class="sub" id="req-co">(if the agent can't tell)</span><input name="company" id="f-company" value="{{ mf.company }}"></label>
+      <label class="pasteonly">Job title <span class="sub">(required when pasting)</span><input name="title" id="f-title" value="{{ mf.title }}"></label>
+      <label class="pasteonly">Location <span class="sub">(optional)</span><input name="location" value="{{ mf.location }}"></label>
+      <label class="pasteonly">Top of pay range <span class="sub">(optional)</span><input name="pay" value="{{ mf.pay }}" placeholder="e.g. 250000"></label>
+    </div>
+    <button type="submit" id="scorebtn">Score</button>
+    <span class="meta" style="margin:0 0 0 10px">Takes about 20-40 seconds. Your filters aren't applied; you'll see a warning for each one it fails.</span>
+  </form>
+</details>
+<script>
+  (function () {
+    const t = document.getElementById('pastetext'), form = document.getElementById('scoreform');
+    function sync() {
+      const pasting = t.value.trim().length > 0;
+      document.querySelectorAll('.pasteonly').forEach(e => e.style.display = pasting ? '' : 'none');
+      document.getElementById('f-company').required = pasting;
+      document.getElementById('f-title').required = pasting;
+      document.getElementById('req-co').textContent = pasting ? '(required when pasting)' : "(if the agent can't tell)";
+    }
+    t.addEventListener('input', sync); sync();
+    form.addEventListener('submit', function () {
+      const b = document.getElementById('scorebtn'); b.textContent = 'Scoring…';
+      setTimeout(() => { b.disabled = true; }, 0);
+    });
+  })();
+</script>
+
+{% if manual_error %}
+  <div class="notice {% if manual_blocked %}err{% else %}warn{% endif %}">{{ manual_error }}</div>
+{% endif %}
+{% if manual_result %}{% set m = manual_result %}
+  <div class="result">
+    <div class="result-head">
+      <span class="score {% if m.score >= 8 %}s-high{% elif m.score >= 6 %}s-mid{% else %}s-low{% endif %}">{{ m.score }}</span>
+      <div>
+        <div class="role"><a href="{{ m.url }}" target="_blank" rel="noopener">{{ m.title }}</a> &middot; {{ m.company }}</div>
+        <div class="loc">{{ m.location or 'Location not listed' }}{% if m.pay_top %} &middot; Top of pay range: ${{ "{:,.0f}".format(m.pay_top) }}{% endif %}</div>
+      </div>
+    </div>
+    {% if m.existing %}
+      <div class="notice ok" style="margin:10px 0">Already in your list (from {{ m.run_date }}{% if m.source == 'manual' %}, added manually{% endif %}), so it wasn't scored again.</div>
+    {% elif m.rescored %}
+      <div class="notice ok" style="margin:10px 0">Rescored. It stays on {{ m.run_date }}.</div>
+    {% else %}
+      <div class="notice ok" style="margin:10px 0">Scored and saved under {{ m.run_date }}, labeled "Added manually".</div>
+    {% endif %}
+    <div class="reason">{{ m.reason }}</div>
+    {% if m.warnings %}
+      <ul class="warnlist">{% for w in m.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+    {% endif %}
+    <div class="actions" style="margin-top:12px">
+      <form method="post" action="/create" style="display:inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="run_date" value="{{ m.run_date }}">
+        <input type="hidden" name="uid" value="{{ m.uid }}">
+        <button type="submit">Create resume and cover letter</button>
+      </form>
+      {% if m.existing %}
+      <form method="post" action="/rescore" style="display:inline" onsubmit="this.querySelector('button').textContent='Rescoring…'">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="uid" value="{{ m.uid }}">
+        <button type="submit" class="secondary">Rescore</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+{% if error %}<div class="notice err">{{ error }}</div>{% endif %}
+{% if sheet_msg %}<div class="notice {% if 'open in Excel' in sheet_msg %}warn{% else %}ok{% endif %}">{{ sheet_msg }}</div>{% endif %}
+{% if pending %}
+  <div class="notice warn">
+    {{ pending }} row(s) are waiting to be added to Applications.xlsx because it was open in Excel.
+    Close it, then
+    <form method="post" action="/sheet/retry" style="display:inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="run_date" value="{{ run_date or '' }}">
+      <button type="submit" class="secondary" style="padding:4px 10px">Try again</button>
+    </form>
+  </div>
+{% endif %}
+
+{% if not run_date %}
+  <div class="empty">No runs yet. Click <b>Run now</b> on the left to fetch and score today's postings.</div>
+{% else %}
+  <div class="topbar"><h2>{{ run_date }}</h2></div>
+  <div class="meta">
+    {% for r in runs %}
+      Run {{ loop.index }} ({{ r.trigger }}, {{ (r.started_at or '')[11:16] }}): {{ r.status }}{% if r.message %} - {{ r.message }}{% endif %}<br>
+      {% set fails = failures.get(r.id, []) %}
+      {% if fails %}
+        {% set open_fails = fails | rejectattr('retried_by') | list %}
+        <div class="notice warn" style="margin:6px 0 10px">
+          <b>Couldn't read {{ fails|length }} compan{{ 'y' if fails|length == 1 else 'ies' }} in this run</b>
+          (each was retried 3 times):
+          <ul style="margin:6px 0 6px 18px">
+          {% for f in fails %}
+            <li>{{ f.company }}{% if f.retried_by %} <i>(retried in a later run)</i>{% endif %}
+              <span class="sub">- {{ f.error[:140] }}</span></li>
+          {% endfor %}
+          </ul>
+          {% if open_fails %}
+          <form method="post" action="/retry-failed" style="display:inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="run_id" value="{{ r.id }}">
+            <button type="submit">Retry failed companies ({{ open_fails|length }})</button>
+          </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    {% endfor %}
+    {% if min_score %}Showing postings scored {{ min_score }} or higher, plus any added manually{% if hidden %} ({{ hidden }} lower-scored posting{{ '' if hidden == 1 else 's' }} hidden){% endif %}. Change the cutoff in settings.yaml.{% endif %}
+  </div>
+
+  {% if postings %}
+  <form method="post" action="/create">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="run_date" value="{{ run_date }}">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th></th><th>Fit</th><th>Company</th><th>Role</th><th>Location</th><th title="Days from the job's published date (from the company's job feed) to the day it was scored">Days since posted</th><th>Why</th></tr></thead>
+      <tbody>
+      {% for p in postings %}
+        <tr>
+          <td class="check"><input type="checkbox" name="uid" value="{{ p.uid }}" aria-label="Select {{ p.title }}"></td>
+          <td><span class="score {% if p.score >= 8 %}s-high{% elif p.score >= 6 %}s-mid{% else %}s-low{% endif %}">{{ p.score }}</span></td>
+          <td>{{ p.company }}{% if p.source == 'manual' %}<div><span class="tag">Added manually</span></div>{% endif %}</td>
+          <td class="role"><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.title }}</a>
+            {% if p.pay_top %}<div class="loc">Top of pay range: ${{ "{:,.0f}".format(p.pay_top) }}</div>{% endif %}</td>
+          <td class="loc">{{ p.location }}</td>
+          <td class="loc" style="white-space:nowrap">{% if p.days is none %}Unknown{% else %}{{ p.days }}{% endif %}</td>
+          <td class="reason">{{ p.reason }}
+            {% if p.warnings %}<ul class="warnlist">{% for w in p.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="actions">
+      <button type="submit">Create custom resume &amp; cover letter</button>
+      <span class="meta" style="margin:0">Takes about 2-4 minutes per checked posting.</span>
+    </div>
+  </form>
+  {% else %}
+    <div class="empty">{% if hidden %}No postings scored {{ min_score }} or higher on this day ({{ hidden }} lower-scored hidden).{% else %}No new postings on this day.{% endif %}</div>
+  {% endif %}
+{% endif %}
+{% endblock %}

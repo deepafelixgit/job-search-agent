@@ -1,0 +1,19 @@
+#!/bin/sh
+# Safety net: refuse any commit that includes private files or an API key,
+# even if someone force-adds them past .gitignore.
+
+blocked=$(git diff --cached --name-only --diff-filter=ACMR | grep -E -i \
+  '(^|/)\.env($|\.)|\.env$|\.docx$|(^|/)output/|(^|/)data/|(^|/)evidence/|Applications\.xlsx$|\.xlsx$|(^|/)settings\.yaml$')
+
+if [ -n "$blocked" ]; then
+  echo "BLOCKED: these private files can't be committed:"
+  echo "$blocked" | sed 's/^/   /'
+  echo "Unstage them with:  git restore --staged <file>"
+  exit 1
+fi
+
+if git diff --cached -U0 --diff-filter=ACMR | grep -E -q 'sk-ant-[A-Za-z0-9_-]{10,}'; then
+  echo "BLOCKED: the staged changes contain something that looks like an Anthropic API key."
+  exit 1
+fi
+exit 0

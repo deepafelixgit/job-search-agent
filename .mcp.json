@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "career-evidence": {
+      "type": "stdio",
+      "command": ".venv-mcp/bin/python",
+      "args": [
+        "-m",
+        "mcp_server.server"
+      ],
+      "env": {
+        "PYTHONPATH": "."
+      }
+    }
+  }
+}

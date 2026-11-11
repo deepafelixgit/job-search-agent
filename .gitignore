@@ -1,0 +1,31 @@
+# --- Private: never commit these ---
+.env
+.env.*
+*.env
+*.docx
+output/
+Applications.xlsx
+*.xlsx
+~$*
+data/
+settings.yaml
+
+*.pdf
+*.doc
+
+# --- Machine files ---
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Self/peer/performance reviews - private
+evidence/
+
+# Example cover letters (tone and structure references) - private
+style_examples/
+
+# Personal documentation (not part of the code)
+Documentation- my folder/
+.venv-mcp/
+.claude/

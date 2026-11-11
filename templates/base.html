@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Search Agent</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1d1d1f; --muted: #6b6b70; --line: #e4e2dd;
+    --accent: #2f5d50; --accent-ink: #ffffff; --warn-bg: #fff4e0; --warn-ink: #7a4b00;
+    --err-bg: #fdecec; --err-ink: #8a1f1f; --ok-bg: #e8f3ee; --ok-ink: #1f5c43;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--ink); }
+  .layout { display: flex; min-height: 100vh; }
+  aside { width: 230px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
+          padding: 20px 14px; }
+  aside h1 { font-size: 16px; margin: 0 0 4px; }
+  aside .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  aside h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 6px 6px; }
+  aside a.date { display: flex; justify-content: space-between; padding: 7px 10px; border-radius: 7px;
+                 color: var(--ink); text-decoration: none; }
+  aside a.date:hover { background: var(--bg); }
+  aside a.date.active { background: var(--accent); color: var(--accent-ink); }
+  main { flex: 1; padding: 26px 32px 60px; max-width: 1200px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .topbar h2 { margin: 0; font-size: 22px; }
+  .meta { color: var(--muted); font-size: 13px; margin: 4px 0 18px; }
+  button, .btn { font: inherit; border: 0; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+                 background: var(--accent); color: var(--accent-ink); }
+  button.secondary { background: var(--panel); color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .notice { padding: 10px 14px; border-radius: 8px; margin: 0 0 16px; }
+  .notice.warn { background: var(--warn-bg); color: var(--warn-ink); }
+  .notice.err { background: var(--err-bg); color: var(--err-ink); }
+  .notice.ok { background: var(--ok-bg); color: var(--ok-ink); }
+  .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 12px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.check { width: 36px; } td.check input { width: 17px; height: 17px; }
+  .score { display: inline-block; min-width: 34px; text-align: center; padding: 3px 0; border-radius: 6px; font-weight: 700; }
+  .s-high { background: var(--ok-bg); color: var(--ok-ink); }
+  .s-mid { background: var(--warn-bg); color: var(--warn-ink); }
+  .s-low { background: #eee; color: #555; }
+  .role a { color: var(--ink); font-weight: 600; text-decoration: none; }
+  .role a:hover { text-decoration: underline; }
+  .reason { color: #3a3a3e; font-size: 14px; max-width: 520px; }
+  .loc { color: var(--muted); font-size: 13px; max-width: 220px; }
+  .actions { margin-top: 18px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; padding: 30px; color: var(--muted); }
+  .scorebox { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 0 0 18px; }
+  .scorebox summary { font-weight: 600; cursor: pointer; }
+  .scorebox form { margin-top: 12px; }
+  .scorebox label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .scorebox input, .scorebox textarea { display: block; width: 100%; margin-top: 4px; font: inherit; font-weight: 400;
+                                        padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
+  .scorebox .sub { color: var(--muted); font-weight: 400; }
+  .row4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+  .result { background: var(--panel); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 16px; margin: 0 0 18px; }
+  .result-head { display: flex; gap: 12px; align-items: flex-start; }
+  .warnlist { margin: 8px 0 0 18px; padding: 0; color: var(--warn-ink); font-size: 13px; }
+  .tag { display: inline-block; margin-top: 4px; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+         background: var(--ok-bg); color: var(--ok-ink); white-space: nowrap; }
+  @media (max-width: 760px) { .layout { flex-direction: column; } aside { width: auto; border-right: 0; border-bottom: 1px solid var(--line); } main { padding: 20px 16px; } }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <h1>Job Search Agent</h1>
+    <div class="sub">Runs daily at 10:00 AM</div>
+    <form method="post" action="/run-now" id="runform">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" id="runbtn" style="width:100%">Run now</button>
+    </form>
+    <div id="runmsg" class="sub" style="margin-top:8px"></div>
+    <h2>Run dates</h2>
+    {% for d in dates %}
+      <a class="date {% if d.run_date == run_date %}active{% endif %}" href="/day/{{ d.run_date }}">
+        <span>{{ d.run_date }}</span>
+      </a>
+    {% else %}
+      <div class="sub" style="padding:0 6px">No runs yet.</div>
+    {% endfor %}
+  </aside>
+  <main>{% block main %}{% endblock %}</main>
+</div>
+<script>
+  // Show "Running…" while a fetch-and-score run is in progress; refresh when it finishes.
+  (function () {
+    let wasRunning = false;
+    async function poll() {
+      try {
+        const r = await fetch('/api/run-status'); const s = await r.json();
+        const btn = document.getElementById('runbtn'), msg = document.getElementById('runmsg');
+        btn.disabled = s.running; btn.textContent = s.running ? 'Running…' : 'Run now';
+        msg.textContent = s.running ? 'Fetching and scoring new postings. This takes a few minutes.' : '';
+        if (wasRunning && !s.running) { location.href = s.latest_date ? '/day/' + s.latest_date : '/'; }
+        wasRunning = s.running;
+      } catch (e) {}
+      setTimeout(poll, 4000);
+    }
+    poll();
+  })();
+</script>
+</body>
+</html>

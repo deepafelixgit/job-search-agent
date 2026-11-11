@@ -1,0 +1,170 @@
+# =====================================================================
+#  JOB SEARCH AGENT - EXAMPLE SETTINGS
+#  Copy this file to settings.yaml and fill in your own values.
+#  settings.yaml is private: it is never committed to git.
+#  Lines starting with # are notes and are
+#  ignored. Keep the indentation (spaces) the way it is.
+#  After editing, the next run picks up your changes automatically.
+# =====================================================================
+
+candidate:
+  name: Jane Doe
+  resume_file: evidence/Your_Resume.docx
+  # Extra evidence the cover letter may draw on (self reviews, peer reviews,
+  # performance reviews). Put the files in the "evidence" folder (it is never
+  # committed to git) and list them here, e.g.  - evidence/2025_Performance_Review.docx
+  # Word (.docx), text (.txt) and Markdown (.md) files work. Your resume is always included.
+  evidence_files: []
+
+display:
+  # Postings scored below this number are hidden in the web app
+  # (they are still saved in the database). 0 shows everything.
+  min_score_to_show: 7
+
+# The first time a company is checked (and on the first run after this setting
+# was added), only postings published in the last N days are scored. Older ones
+# are remembered as seen and never shown. After that, every new posting counts.
+first_check_days: 14
+
+# Which Claude models to use (you normally don't need to change these).
+models:
+  scoring: claude-sonnet-5-5   # scores each posting 1-10 (many calls, so a faster model)
+  writing: claude-opus-5-5     # tailored resume, fact-check, cover letter (fewer calls, best quality)
+
+# AI projects the cover letter may describe (true = mention it, false = leave it out).
+my_projects:
+  job_search_agent: true   # the daily job search agent
+  mcp_server: true         # the career-evidence MCP server
+
+# Cover letters to these companies describe your AI projects without naming Claude, Claude Code
+# or Anthropic. Set name_claude_for_competitors to true to name them anyway.
+anthropic_competitors: [Example AI Lab, Another AI Lab]
+name_claude_for_competitors: false
+
+# Headlines approved for the line under your name. The first one is used in the
+# base resume. (Nothing in the agent picks from this list yet.)
+approved_headlines:
+  - "Senior Technical Program Manager | Your Focus Area"
+  - "Technical Program Leader | Another Focus Area"
+
+# Resume bullets that are FIXED TEXT: tailoring never changes them, and every run checks they are
+# in the base resume and the tailored resume character for character (it stops if not).
+fixed_bullets: []
+
+# Bullets that go into EVERY tailored resume exactly as written, character for
+# character (never reworded or shortened). Each is placed in the Meta subheading
+# most relevant to the posting. Only pin bullets whose numbers are in
+# evidence/verified_metrics.txt and that use commercial names, not codenames:
+# changes.txt warns you if one doesn't. If your resume already has an older
+# wording of the same bullet, the pinned one replaces it.
+pinned_bullets:
+  - "Led a cross-team release program across 10+ engineering teams, cutting release time from 6 weeks to 2 weeks."
+
+# Personal word lists used when tailoring and writing (kept here, not in the code).
+personal:
+  internal_terms: ["internal shorthand", "team nickname"]   # never written unless explained
+  explain_terms: ["internal-label"]                         # allowed only with a short explanation
+  translations:                                             # approved plain-language swaps
+    - ['\binternal shorthand\b', "plain words with the same meaning"]
+  codename_words: [Codename]                                # internal codenames
+  abbreviations: {abc: example business code}              # employer-specific abbreviations (one line)
+  experience_words: [Example Employer, Example Product, Example University]   # names from your own history
+
+# ---------------------------------------------------------------------
+#  COMPANIES
+#  Each company needs a name and the kind of job board it uses:
+#    greenhouse   -> board_id is the name in boards.greenhouse.io/<board_id>
+#    lever        -> board_id is the name in jobs.lever.co/<board_id>
+#    ashby        -> board_id is the name in jobs.ashbyhq.com/<board_id>
+#    jibe         -> url of a careers site that has a /api/jobs feed (iCIMS Jibe sites)
+#    amazon_jobs  -> amazon.jobs; MUST be narrowed with business_categories or must_mention
+#    workday      -> host, tenant, site (from the company's myworkdayjobs.com address)
+#    eightfold    -> url, domain (api: pcsx for Eightfold's newer version)
+#    oracle       -> host, site (Oracle Cloud careers)
+#    workable / rippling -> board_id
+#    apple, google, atlassian -> their own career sites (google: list of locations to search)
+#    Optional on any company:  pause: 1.5   (seconds between requests, for strict sites)
+#  Every request respects the site's robots.txt (its rules for automated readers).
+#  Note: Amazon (general), Zoox, eero and Meta are always blocked, even if listed here.
+# ---------------------------------------------------------------------
+companies:
+  - name: Example AI Company
+    board: greenhouse
+    board_id: exampleai
+
+  - name: Example Robotics
+    board: ashby
+    board_id: examplerobotics
+
+  - {name: Example Devices, board: lever, board_id: exampledevices}
+
+# ---------------------------------------------------------------------
+#  ROLE RULES
+# ---------------------------------------------------------------------
+role_titles:            # a title must contain one of these (not case-sensitive)
+  - Technical Program Manager
+  - Engineering Program Manager      # also covers "System(s) Engineering Program Manager"
+  - TPM
+  - EPM
+  - Technical Program Management     # e.g. "Director, Technical Program Management"
+  - Program Management               # e.g. "Head of Program Management", "Senior Manager, Program Management"
+  - Program Manager                  # any program manager title, e.g. "Senior Program Manager"
+
+seniority_words:        # Rule A: title has one of these -> keep (if location fits)
+  - Senior
+  - Sr
+  - Staff
+  - Principal
+  - Lead
+  - Director
+  - Head                # e.g. "Head of Program Management"
+  - Senior Manager
+
+pay:
+  # Rule B: any-level TPM role is kept if the TOP of its posted base pay
+  # is at or above this number (USD per year). Roles with no listed pay
+  # only qualify through Rule A.
+  min_top_of_range_usd: 200000
+
+exclude_title_words:    # titles containing any of these are dropped
+  - Validation
+  - Verification
+  - V&V
+  - Test
+  - Testing
+  - Quality
+  - QA
+  - Marketing Program Manager
+  - "Program Manager, Marketing"
+  - Operations Program Manager
+  - "Program Manager, Operations"
+
+# ---------------------------------------------------------------------
+#  LOCATION RULES
+#  A posting counts if ANY of its locations is one of these places, or is
+#  remote in the US. "Hybrid - San Jose" counts the same as "San Jose".
+#  A city with a different state or country after it (e.g. "Dublin, Ireland",
+#  "Newark, NJ") does NOT count.
+# ---------------------------------------------------------------------
+location:
+  allow_remote_us: true
+
+  regions:
+    - Bay Area
+    - San Francisco Bay Area
+    - SF Bay Area
+    - Silicon Valley
+    - South Bay
+    - Peninsula
+
+  neighborhoods:
+    - Redwood Shores
+    - Moffett Field
+    - Stanford
+
+  cities:               # cities you would work in
+    - San Jose
+    - Sunnyvale
+    - Mountain View
+    - Palo Alto
+    - San Francisco
