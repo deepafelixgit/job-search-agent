@@ -13,7 +13,7 @@ A posting is only scored when its title, company and a full description (150+ wo
 and it doesn't look expired. Otherwise the person is asked to paste the description.
 
 Filters are NOT applied to manual postings; each filter the posting would fail is shown as a
-warning instead. The hard block list (Amazon, Zoox, eero, Meta) still applies.
+warning instead. The block list (personal.blocked in settings.yaml) still applies.
 """
 from __future__ import annotations
 
@@ -25,7 +25,8 @@ from typing import List, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from . import db
-from .config import is_blocked_company, load_settings, resume_path
+from .config import load_settings, resume_path
+from .personal import blocked_host, blocked_word, is_blocked
 from .fetchers import (HEADERS, Posting, amazon_posting, greenhouse_posting, html_to_text, iso_date,
                        lever_posting, top_of_pay_range)
 from .filters import Filter
@@ -35,7 +36,7 @@ NEVER_FETCH = ("linkedin.com", "lnkd.in", "indeed.com")
 EXPIRED = re.compile(r"no longer (accepting applications|available|open|active)|position (has been|is) filled|"
                      r"job (you are looking for )?(is|has been) (closed|removed|expired)|this job has expired|"
                      r"sign in to (view|see) (this|the) job", re.I)
-BLOCKED_HOSTS = ("metacareers.com", "facebook.com", "zoox.com", "eero.com")
+BLOCKED_MSG = "is on your blocked list (personal.blocked in settings.yaml)"
 
 
 class NeedsPaste(Exception):
@@ -73,13 +74,6 @@ def normalize_url(url: str) -> str:
 
 def words(text: str) -> int:
     return len(re.findall(r"\w+", text or ""))
-
-
-def is_blocked(company: str) -> bool:
-    n = (company or "").strip().lower()
-    if is_blocked_company(n):
-        return True
-    return bool(re.match(r"(amazon|meta|facebook|zoox|eero)\b", n)) and not re.search(r"web services|\baws\b", n)
 
 
 def _settings_company(settings: dict, **match) -> Optional[dict]:
@@ -194,13 +188,23 @@ def _read_amazon(settings, url: str) -> Posting:
     if not j:
         raise NeedsPaste("That job wasn't found on amazon.jobs (it may have closed).")
     head = j.get("title", "") + " " + (j.get("company_name") or "") + " " + html_to_text(j.get("description") or "")[:600]
-    if re.search(r"\b(eero|zoox)\b", head, re.I):
-        raise Blocked("This posting is for eero or Zoox, which are on your blocked list.")
-    if (j.get("business_category") or "").lower() == "aws":
-        return amazon_posting("AWS", j)
-    if re.search(r"\bRing\b", head):
-        return amazon_posting("Ring", j)
-    raise Blocked("This is a general Amazon posting (not AWS or Ring), and Amazon is on your blocked list.")
+    word = blocked_word(head)
+    if word:
+        raise Blocked(f"This posting mentions {word}, which {BLOCKED_MSG}.")
+    # Name it after the amazon_jobs company in settings that matches (same rules as the daily reader)
+    desc = html_to_text(j.get("description") or "")
+    for c in settings.get("companies", []):
+        if c.get("board") != "amazon_jobs":
+            continue
+        cats = [x.lower() for x in c.get("business_categories") or []]
+        must = c.get("must_mention")
+        if (cats and (j.get("business_category") or "").lower() in cats) or \
+                (must and re.search(rf"\b{re.escape(must)}\b", j.get("title", "") + " " + desc[:300])):
+            return amazon_posting(c["name"], j)
+    name = (j.get("company_name") or "").strip() or _host(url)
+    if is_blocked(name):
+        raise Blocked(f"This posting ({name}) {BLOCKED_MSG}.")
+    return amazon_posting(name, j)
 
 
 def _read_eightfold(settings, company: dict, url: str) -> Posting:
@@ -319,8 +323,8 @@ def read_link(url: str, settings: dict, company_hint: str = "") -> Posting:
     host, parts = _host(url), urlsplit(url)
     path = [x for x in parts.path.split("/") if x]
     q = parse_qs(parts.query)
-    if any(_on(host, h) for h in BLOCKED_HOSTS):
-        raise Blocked("This posting is from a company on your blocked list (Amazon, Zoox, eero, Meta).")
+    if blocked_host(host):
+        raise Blocked(f"This career site {BLOCKED_MSG}.")
     try:
         if _on(host, "greenhouse.io"):
             if "for" in q and "token" in q:                      # embed links
@@ -381,7 +385,7 @@ def read_link(url: str, settings: dict, company_hint: str = "") -> Posting:
 def check_reliable(p: Posting, pasted: bool) -> None:
     """Never score a guessed or partial description."""
     if is_blocked(p.company):
-        raise Blocked(f"{p.company} is on your blocked list (Amazon, Zoox, eero, Meta), so it wasn't scored.")
+        raise Blocked(f"{p.company} {BLOCKED_MSG}, so it wasn't scored.")
     if not p.title:
         raise NeedsPaste("The job title couldn't be read." if not pasted else "Please enter the job title.")
     if not p.company:
@@ -481,9 +485,9 @@ def submit(url: str, text: str, company: str = "", title: str = "", location: st
         raise NeedsPaste("Please enter a job posting link or paste the job description.")
     if text:
         if is_blocked(company):
-            raise Blocked(f"{company} is on your blocked list (Amazon, Zoox, eero, Meta), so it wasn't scored.")
-        if url and any(_on(_host(url), h) for h in BLOCKED_HOSTS):
-            raise Blocked("This posting is from a company on your blocked list (Amazon, Zoox, eero, Meta).")
+            raise Blocked(f"{company} {BLOCKED_MSG}, so it wasn't scored.")
+        if url and blocked_host(_host(url)):
+            raise Blocked(f"This career site {BLOCKED_MSG}.")
         existing = find_existing(url=url) if url else None
         p = from_paste(text, company, title, location, pay, url)
         existing = existing or find_existing(uid=p.uid)

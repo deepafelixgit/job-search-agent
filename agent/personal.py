@@ -6,6 +6,9 @@
   codename_words     internal codenames (also read from verified_metrics.txt)
   experience_words   employers, products and schools from your own history: a sentence naming
                      one of these is about you, so it must be backed by evidence
+  blocked            companies never searched, scored or written for:
+                       names, name_prefixes (unless the name contains one of `allowed`),
+                       hosts (career sites never read), words_in_posting
 
 settings.yaml is re-read when it changes, so edits apply on the next resume or letter.
 """
@@ -84,3 +87,37 @@ def prompt_block() -> str:
         lines.append("APPROVED PLAIN-LANGUAGE TRANSLATIONS (each counts as the same meaning as the original): "
                      + "; ".join(f'"{readable(p)}" = "{plain}"' for p, plain in translations()))
     return ("\n\n" + "\n".join(lines)) if lines else ""
+
+
+# ------------------------------------------------------------------ blocked companies
+
+def _blocked() -> dict:
+    return _data().get("blocked") or {}
+
+
+def is_blocked(company: str) -> bool:
+    """True for a company on the block list in settings.yaml (personal.blocked)."""
+    n = (company or "").strip().lower()
+    if not n:
+        return False
+    b = _blocked()
+    if n in {str(x).strip().lower() for x in b.get("names") or []}:
+        return True
+    allowed = [str(x).lower() for x in b.get("allowed") or []]
+    if any(re.search(rf"\b{re.escape(a)}\b", n) for a in allowed):
+        return False
+    return any(re.match(rf"{re.escape(str(x).lower())}\b", n) for x in b.get("name_prefixes") or [])
+
+
+def blocked_host(host: str) -> bool:
+    """A career site on the block list (personal.blocked.hosts)."""
+    host = (host or "").lower()
+    return any(host == d or host.endswith("." + d) for d in (str(x).lower() for x in _blocked().get("hosts") or []))
+
+
+def blocked_word(text: str) -> Optional[str]:
+    """The first personal.blocked.words_in_posting word found in the text, if any."""
+    for w in _blocked().get("words_in_posting") or []:
+        if re.search(rf"\b{re.escape(str(w))}\b", text or "", re.I):
+            return str(w)
+    return None

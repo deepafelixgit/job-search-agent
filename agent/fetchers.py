@@ -16,7 +16,7 @@ from typing import List, Optional
 
 import requests
 
-from .config import is_blocked_company
+from .personal import blocked_word, is_blocked
 from . import http
 from .robots import check as robots_check
 
@@ -217,14 +217,13 @@ def fetch_jibe(company: dict) -> List[Posting]:
 
 
 def fetch_amazon_jobs(company: dict) -> List[Posting]:
-    """amazon.jobs official search feed, narrowed to one business (AWS, Ring...)."""
+    """amazon.jobs official search feed, narrowed to one business."""
     cats = [c.lower() for c in company.get("business_categories", [])]
     must = company.get("must_mention")
     if not cats and not must:
-        raise ValueError(f"{company['name']}: amazon_jobs needs business_categories or must_mention "
-                         "(general Amazon roles are blocked).")
+        raise ValueError(f"{company['name']}: amazon_jobs needs business_categories or must_mention, "
+                         "so the search stays narrowed to one business.")
     must_re = re.compile(rf"\b{re.escape(must)}\b") if must else None
-    blocked_re = re.compile(r"\b(eero|zoox)\b", re.I)
     seen, out = set(), []
     for query in ("technical program manager", "engineering program manager", "program management"):
         offset = 0
@@ -245,7 +244,7 @@ def fetch_amazon_jobs(company: dict) -> List[Posting]:
                 # must be IN the title or opening lines, not just listed among Amazon products
                 if must_re and not must_re.search(j.get("title", "") + " " + desc[:300]):
                     continue
-                if blocked_re.search(j.get("title", "") + " " + (j.get("company_name") or "") + " " + desc[:600]):
+                if blocked_word(j.get("title", "") + " " + (j.get("company_name") or "") + " " + desc[:600]):
                     continue
                 out.append(amazon_posting(company["name"], j))
             offset += 100
@@ -289,8 +288,8 @@ def fetch_company(company: dict, known: frozenset = frozenset(), older_than: Opt
     """known: posting IDs already dealt with. older_than: YYYY-MM-DD; postings
     published before it don't need full details (they'll only be remembered as
     seen). Both just save work for readers that need one extra request per posting."""
-    if is_blocked_company(company.get("name", "")):
-        raise ValueError(f"{company['name']} is on the blocked list (Amazon, Zoox, eero, Meta) and was skipped.")
+    if is_blocked(company.get("name", "")):
+        raise ValueError(f"{company['name']} is on your blocked list (personal.blocked in settings.yaml) and was skipped.")
     from .site_readers import SITE_READERS, run_reader
     if company.get("board") in SITE_READERS:
         return run_reader(company, known, older_than)

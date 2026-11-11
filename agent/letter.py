@@ -60,27 +60,11 @@ def _names_experience(sentence: str) -> bool:
     return bool(personal.experience_match(sentence) or REVIEW_SAID.search(sentence))
 
 
-def _neutral(facts: str) -> str:
-    """The same facts without naming Claude, Claude Code or Anthropic."""
-    for a, b in (("with Claude Code", "with an AI coding agent"), ("the Claude API", "an LLM API"),
-                 ("lets Claude search", "lets an AI model search"), ("Claude", "the AI model")):
-        facts = facts.replace(a, b)
-    return facts + "\n- Do not name the AI tools or model provider used."
-
-
-def hides_claude(settings: dict, company: str) -> bool:
-    """Letters to companies that compete with Anthropic don't name Claude or Claude Code,
-    unless name_claude_for_competitors is true in settings.yaml."""
-    rivals = {c.strip().lower() for c in settings.get("anthropic_competitors") or []}
-    return company.strip().lower() in rivals and not settings.get("name_claude_for_competitors", False)
-
-
-def enabled_projects(settings: dict, company: str = "") -> Dict[str, str]:
-    """my_projects in settings.yaml switches projects on/off for cover letters."""
+def enabled_projects(settings: dict) -> Dict[str, str]:
+    """my_projects in settings.yaml switches projects on/off for cover letters. Every letter describes
+    the projects the same way, whatever the company."""
     flags = dict({"job_search_agent": True, "mcp_server": False}, **(settings.get("my_projects") or {}))
-    hide = hides_claude(settings, company)
-    return {k: (_neutral(PROJECT_FACTS[k]) if hide else PROJECT_FACTS[k])
-            for k, on in flags.items() if on and k in PROJECT_FACTS}
+    return {k: PROJECT_FACTS[k] for k, on in flags.items() if on and k in PROJECT_FACTS}
 
 
 def find_news(model: str, company: str, role: str, today: dt.date) -> List[dict]:
@@ -361,11 +345,7 @@ def counts_companies(sentence: str) -> bool:
     return bool(COMPANY_COUNT.search(sentence))
 
 
-def names_claude(sentence: str) -> bool:
-    return bool(re.search(r"\b(Claude|Anthropic)\b", sentence))
-
-
-def automatic_checks(paragraphs: List[List[dict]], company: str = "", hide_claude: bool = False,
+def automatic_checks(paragraphs: List[List[dict]], company: str = "",
                      third_party_news: str = "", evidence_text: str = "") -> List[str]:
     """Measured by code, not judged by the model."""
     body = _body(paragraphs)
@@ -421,8 +401,6 @@ def automatic_checks(paragraphs: List[List[dict]], company: str = "", hide_claud
             out.append(f'[plain_language] internal term(s) {", ".join(terms)}: "{t}"')
         if company and prescribes(t, company):
             out.append(f'[no_prescribing] tells the company what it needs: "{t}"')
-        if hide_claude and names_claude(t):
-            out.append(f'[project] names Claude/Anthropic in a letter to a competitor: "{t}"')
         if counts_companies(t):
             out.append(f'[project] says how many companies the agent covers: "{t}"')
     if body.count("—") > 1:
@@ -441,7 +419,7 @@ def _paragraphs_from(letter: dict, name: str) -> List[List[dict]]:
 
 def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str, today: dt.date,
                  posting_evidence: PostingEvidence, projects: Dict[str, str],
-                 precheck_model: str = "", hide_claude: bool = False) -> Tuple[List[dict], List[str]]:
+                 precheck_model: str = "") -> Tuple[List[dict], List[str]]:
     """Plan -> draft -> critique against the senior-letter standard -> revise -> claim check (last, in code).
     Returns (news items, lines for changes.txt)."""
     precheck_model = precheck_model or model
@@ -485,9 +463,6 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     examples = [n for n, _ in load_examples()]
     notes.append("- Style examples (tone and structure only): " + ", ".join(examples) if examples else
                  "- STYLE EXAMPLES: none found - style_examples/ is empty, so no tone reference was used.")
-    if hide_claude:
-        notes.append(f"- {post['company']} competes with Anthropic: the AI project is described without naming "
-                     "Claude or Claude Code (anthropic_competitors in settings.yaml).")
 
     # 2. draft
     letter = ask_json(model, WRITE_RULES + personal.prompt_block(), f"{context}\n\nPLAN:\n{plan_text}", LETTER_SCHEMA, effort="high")
@@ -497,8 +472,8 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     # fail it get reworded to the evidence (or cut) here, instead of silently disappearing at
     # the end. Round 3 happens only if claim failures remain.
     for rnd in (1, 2, 3):
-        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume, hide_claude)
-        auto = automatic_checks(paragraphs, post['company'], hide_claude, third_party, ev_text) + [
+        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume)
+        auto = automatic_checks(paragraphs, post['company'], third_party, ev_text) + [
             f'[backed] the claim check would remove: "{sent}" ({why}). Reword it to match the evidence passage or '
             f'verified-metrics line closely (same facts, same numbers, one program), or cut it - and keep the '
             f'surrounding sentences coherent without it.' for sent, why in would_fail]
@@ -527,7 +502,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     # 4b. repair: rewrite only sentences the claim check would still remove (up to 2 passes)
     repair_flagged: List[Tuple[str, str]] = []
     for rep in (1, 2):
-        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume, hide_claude)
+        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume)
         if not would_fail:
             break
         notes += ["", f"COVER LETTER REPAIR (pass {rep}: sentences the claim check would remove, reworded to the evidence)"]
@@ -541,13 +516,13 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
 
     # 5. claim check, last
     kept, gate_notes, final_removed = _evidence_gate(model, paragraphs, post, posting_evidence, projects, news,
-                                                     resume, hide_claude)
+                                                     resume)
     closing = next((ln.strip() for ln in (letter["closing"] or "").splitlines()
                     if ln.strip() and name.lower() not in ln.lower()), "Sincerely,")
     write_cover_letter(resume_path, out_path, today.strftime("%B %-d, %Y"), letter["greeting"],
                        kept, closing, name)
     final_auto = automatic_checks([[{"text": s} for s in split_sentences(p)] for p in kept],
-                                  post['company'], hide_claude, third_party, ev_text)
+                                  post['company'], third_party, ev_text)
     words = len(re.findall(r"\b[\w'’-]+\b", " ".join(kept)))
     notes += ["", "FINAL LETTER (after the claim check)", f"- {words} words, {len(kept)} paragraphs."]
     notes += [f"- Still open: {a}" for a in final_auto] or ["- Meets every automatic check."]
@@ -567,8 +542,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
 
 
 def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evidence: PostingEvidence,
-                   projects: Dict[str, str], news: List[dict], resume: str,
-                   hide_claude: bool = False) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
+                   projects: Dict[str, str], news: List[dict], resume: str) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
     """Judge every sentence (in code, run last): facts about the candidate must be stated by the
     evidence (different words allowed, nothing added); perspective about the company/role needs
     no evidence but may not state an unsupported fact about the candidate's past.
@@ -634,8 +608,6 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
                 hard.append(f"copies wording from the style example {src}")
             if counts_companies(s):
                 hard.append("says how many companies the job search agent covers")
-            if hide_claude and names_claude(s):
-                hard.append(f"names Claude/Anthropic in a letter to {post['company']} (an Anthropic competitor)")
             if hard:
                 problem = "; ".join(([problem] if problem else []) + hard)
             if problem:

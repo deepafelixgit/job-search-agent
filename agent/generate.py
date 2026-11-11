@@ -16,7 +16,7 @@ import docx
 
 from .evidence_gate import coverage_report, find_evidence
 from .resume import resume_text
-from .letter import enabled_projects, hides_claude, write_letter
+from .letter import enabled_projects, write_letter
 from .tailor import tailor_resume
 
 ABBREVIATIONS = [
@@ -87,9 +87,8 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             progress(uid, "Searching recent news and writing cover letter…")
             letter_file = folder / f"{name_us}_Cover_Letter_{company}_{role}.docx"
             news, letter_notes = write_letter(model, src, post, letter_file, name, today,
-                                              posting_evidence, enabled_projects(settings, post["company"]),
-                                              precheck_model=settings["models"]["scoring"],
-                                              hide_claude=hides_claude(settings, post["company"]))
+                                              posting_evidence, enabled_projects(settings),
+                                              precheck_model=settings["models"]["scoring"])
 
             header = [f"Changes made for: {post['company']} - {post['title']}",
                       f"Posting: {post['url']}", f"Created: {today.isoformat()}", "",

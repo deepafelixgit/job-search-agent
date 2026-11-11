@@ -36,11 +36,6 @@ my_projects:
   job_search_agent: true   # the daily job search agent
   mcp_server: true         # the career-evidence MCP server
 
-# Cover letters to these companies describe your AI projects without naming Claude, Claude Code
-# or Anthropic. Set name_claude_for_competitors to true to name them anyway.
-anthropic_competitors: [Example AI Lab, Another AI Lab]
-name_claude_for_competitors: false
-
 # Headlines approved for the line under your name. The first one is used in the
 # base resume. (Nothing in the agent picks from this list yet.)
 approved_headlines:
@@ -69,6 +64,12 @@ personal:
   codename_words: [Codename]                                # internal codenames
   abbreviations: {abc: example business code}              # employer-specific abbreviations (one line)
   experience_words: [Example Employer, Example Product, Example University]   # names from your own history
+  blocked:                       # companies never searched, scored or written for
+    names: [example blocked company]                 # exact names (any capitalisation)
+    name_prefixes: [exampleco]                       # any name starting with one of these words...
+    allowed: [exampleco cloud]                       # ...unless it also contains one of these
+    hosts: [careers.example-blocked.com]             # career sites never read
+    words_in_posting: [example subsidiary]           # postings naming one of these are skipped
 
 # ---------------------------------------------------------------------
 #  COMPANIES
@@ -85,7 +86,7 @@ personal:
 #    apple, google, atlassian -> their own career sites (google: list of locations to search)
 #    Optional on any company:  pause: 1.5   (seconds between requests, for strict sites)
 #  Every request respects the site's robots.txt (its rules for automated readers).
-#  Note: Amazon (general), Zoox, eero and Meta are always blocked, even if listed here.
+#  Note: companies in personal.blocked (above) are always skipped, even if listed here.
 # ---------------------------------------------------------------------
 companies:
   - name: Example AI Company

@@ -13,11 +13,6 @@ LOG_DIR = DATA_DIR / "logs"
 DB_FILE = DATA_DIR / "jobs.db"
 SPREADSHEET = ROOT / "Applications.xlsx"
 
-# These companies are never searched, even if someone adds them to settings.yaml.
-# (AWS and Ring are allowed - they are matched by their own names.)
-BLOCKED_COMPANIES = {"amazon", "amazon.com", "amazon inc", "zoox", "eero",
-                     "meta", "meta platforms", "meta platforms inc", "facebook"}
-
 
 def load_settings() -> dict:
     if not SETTINGS_FILE.exists():
@@ -34,6 +29,3 @@ def load_settings() -> dict:
 def resume_path(settings: dict) -> Path:
     return ROOT / settings["candidate"]["resume_file"]
 
-
-def is_blocked_company(name: str) -> bool:
-    return name.strip().lower() in BLOCKED_COMPANIES
