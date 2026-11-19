@@ -28,7 +28,7 @@ from .evidence_gate import (Judged, PostingEvidence, _cite_passage, _verified_li
                             replace_codenames, split_sentences, titles_conflicting, unexplained_acronyms)
 from .resume import map_resume, resume_text, write_cover_letter, write_tailored_resume
 
-MAX_META_BULLETS = 10
+MAX_META_BULLETS = 12
 
 # Plain-language versions of Meta-internal terms, used only where the meaning is identical
 VAGUE = re.compile(r"\b(drove|delivered|achieved) (gains|impact|results|improvements)\b|\bvarious\b|\bmany things\b", re.I)
@@ -103,7 +103,7 @@ reorder items, and drop items that are irrelevant to this posting (keep at least
 - Meta bullets stay under their original subheading (new bullets go under the best-fitting one). You may \
 reorder subheadings and the bullets within them.
 - RANKING: rank EVERY candidate Meta bullet (existing ids, new ids and pinned ids) by how directly it matches \
-the posting's TOP 3 RESPONSIBILITIES (1 = most direct), with a one-line reason. Only the top 10 are kept; \
+the posting's TOP 3 RESPONSIBILITIES (1 = most direct), with a one-line reason. Only the top 12 are kept; \
 pinned bullets are always kept.
 - PLAIN LANGUAGE: translate Meta-internal terms into the posting's vocabulary only where the meaning is \
 identical (use the APPROVED PLAIN-LANGUAGE TRANSLATIONS below). Never write the INTERNAL SHORTHAND below \
@@ -257,7 +257,7 @@ def _posting_block(post) -> str:
 
 def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
                   pinned_bullets: List[str] = (), evidence: Optional[PostingEvidence] = None,
-                  fixed_bullets: List[str] = ()) -> List[str]:
+                  fixed_bullets: List[str] = (), guidance: str = "") -> List[str]:
     """Write the tailored resume to out_path. Returns the lines for changes.txt.
 
     pinned_bullets (from settings.yaml) are always included, character for
@@ -320,7 +320,10 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
               "Use the evidence passages to decide what to lead with. Every sentence you write must state only "
               "what the resume says AND what the evidence backs; numbers must match verified_metrics.txt exactly. "
               "Every sentence will be checked automatically and removed if unsupported.")
-    out = ask_json(model, TAILOR_RULES + personal.prompt_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
+    guidance_block = ("\n\nCANDIDATE'S TAILORING GUIDANCE - follow it when choosing what to lead with, what to "
+                      "rank, reorder or drop, and how to word the summary. It never overrides the hard rules above: "
+                      "if the two conflict, the hard rules win.\n" + guidance) if guidance else ""
+    out = ask_json(model, TAILOR_RULES + guidance_block + personal.prompt_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
                    effort="high", max_tokens=32000)
 
     # ---- New bullets from evidence (code checks: real sources, numbers exactly as in the sources)
@@ -556,7 +559,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     for _, items in plan_groups:
         items[:] = [[b, (t if b in pins else final[("BULLET", b)])] for b, t in items
                     if b in pins or final[("BULLET", b)]]
-    # ---- Keep the top 10 Meta bullets by match to the posting's top 3 responsibilities (pinned always kept)
+    # ---- Keep the top 12 Meta bullets by match to the posting's top 3 responsibilities (pinned always kept)
     present = [b for _, items in plan_groups for b, _ in items]
     others = sorted([b for b in present if b not in pins], key=lambda b: rank.get(b, (999, ""))[0])
     keep_ids = set(pins) | set(others[:max(0, MAX_META_BULLETS - len([b for b in present if b in pins]))])

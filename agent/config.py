@@ -29,3 +29,15 @@ def load_settings() -> dict:
 def resume_path(settings: dict) -> Path:
     return ROOT / settings["candidate"]["resume_file"]
 
+
+def tailoring_guidance(settings: dict) -> str:
+    """The candidate's own resume-tailoring guidance (candidate.tailoring_guidance_file in
+    settings.yaml), or "" when none is set. A missing file is an error, so a typo never
+    silently drops the guidance."""
+    name = (settings.get("candidate") or {}).get("tailoring_guidance_file")
+    if not name:
+        return ""
+    path = ROOT / name
+    if not path.is_file():
+        raise FileNotFoundError(f"tailoring_guidance_file in settings.yaml points to {name}, which doesn't exist.")
+    return path.read_text(encoding="utf-8").strip()

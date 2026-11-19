@@ -15,6 +15,10 @@ candidate:
   # committed to git) and list them here, e.g.  - evidence/2025_Performance_Review.docx
   # Word (.docx), text (.txt) and Markdown (.md) files work. Your resume is always included.
   evidence_files: []
+  # Your own instructions for tailoring the resume to each role (Markdown or text), e.g. what to
+  # lead with for robotics vs. software roles. Followed when tailoring; never overrides the
+  # honesty rules. Keep it in the private "evidence" folder. Leave empty for none.
+  tailoring_guidance_file: ""
 
 display:
   # Postings scored below this number are hidden in the web app

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, List
 
 from . import db
-from .config import OUTPUT_DIR, LOG_DIR, load_settings, resume_path
+from .config import OUTPUT_DIR, LOG_DIR, load_settings, resume_path, tailoring_guidance
 from .sheet import SpreadsheetLocked, append_rows, link_lookup, upgrade_sheet
 from .evidence import load_evidence
 import docx
@@ -82,7 +82,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             changes = tailor_resume(model, src, post, resume_file,
                                     pinned_bullets=settings.get("pinned_bullets") or [],
                                 fixed_bullets=settings.get("fixed_bullets") or [],
-                                    evidence=posting_evidence)
+                                    evidence=posting_evidence, guidance=tailoring_guidance(settings))
 
             progress(uid, "Searching recent news and writing cover letter…")
             letter_file = folder / f"{name_us}_Cover_Letter_{company}_{role}.docx"
@@ -181,7 +181,7 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
         resume_file = folder / f"{name_us}_Resume_{company}_{role}.docx"
         changes = tailor_resume(model, src, post, resume_file, pinned_bullets=settings.get("pinned_bullets") or [],
                                 fixed_bullets=settings.get("fixed_bullets") or [],
-                                evidence=ev)
+                                evidence=ev, guidance=tailoring_guidance(settings))
         header = [f"Resume changes for: {post['company']} - {post['title']}", f"Posting: {post['url']}",
                   f"Created: {dt.date.today().isoformat()}", f"Base resume: {src}", ""]
         (folder / "changes.txt").write_text("\n".join(header + evidence_inputs(ev) + [""] + changes) + "\n",
