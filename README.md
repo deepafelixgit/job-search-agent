@@ -3,8 +3,9 @@
 A personal job search agent that runs on a Mac. Every morning it reads official company job feeds, keeps only
 the roles that match a set of plain rules, and uses Claude to score each new posting 1-10 for fit against my
 resume, with a short reason. I review the results in a local web app, where I can also score any posting by
-pasting its link or description. For roles I choose, it drafts a tailored resume and cover letter, and every claim
-in them must be backed by my documented work history, which a local MCP server searches.
+pasting its link or description. For roles I choose, it drafts a tailored resume, a cover letter and a LinkedIn
+message to the company's recruiter, and every claim in them must be backed by my documented work history, which a
+local MCP server searches.
 
 ## Architecture
 
@@ -27,14 +28,14 @@ flowchart LR
     end
 
     subgraph Writing["Tailoring"]
-        T["Resume tailoring and<br/>cover letter drafting"]
+        T["Resume tailoring, cover letter<br/>and recruiter message drafting"]
         C["Claim check: every sentence<br/>judged against the evidence"]
-        O["Word files, changes.txt,<br/>Applications.xlsx row"]
+        O["Word files, recruiter message,<br/>changes.txt, Applications.xlsx row"]
     end
 
     subgraph MCP["career-evidence MCP server (local, read-only)"]
         E["Search evidence<br/>Verified metrics<br/>Check a claim"]
-        V[("Private evidence folder:<br/>reviews, resume,<br/>verified metrics")]
+        V[("Private evidence folder:<br/>reviews, resume, verified<br/>metrics, impact of my work")]
     end
 
     F --> D --> R --> S --> DB
@@ -60,10 +61,21 @@ flowchart LR
   every number must appear in the verified-metrics file, internal codenames and terms are replaced, and job
   titles must match the resume. Unsupported sentences are removed, and `changes.txt` lists each one with the
   reason.
+- **Impact without overclaiming.** `impact_of_my_work.md` records, for each area of my work, what I did (Fact),
+  my own view of why it mattered (Perspective), what the product does for people with a public source (Public
+  fact), my preferred wording (Say it like this) and the roles it suits (Good fit for). The MCP server labels
+  each line: only Fact lines count as evidence of what I did; a Perspective is presented as my view, never a
+  measured result; a Public fact is a claim about the product, never something I built; preferred wording is
+  a guide, never evidence.
+- **Confident positioning, checked in code.** Underselling words ("helped", "supported", "worked on"...) and
+  bare "test infrastructure" / "testing" / "test lab" about my work are flagged in the resume, cover letter
+  and recruiter message and rewritten (the work is "automated hardware-in-the-loop test infrastructure" or
+  "automated continuous integration (CI) testing").
 - **Verified metrics are the source of truth.** Numbers come only from one hand-checked file, used exactly as
   written, never rounded, combined or extrapolated. Lines marked as needing confirmation can't be used.
-- **Human review before anything is sent.** The agent never applies to anything or sends anything. It writes
-  files to a local folder, and I read and edit them before deciding whether to apply.
+- **Human review before anything is sent.** The agent never applies to anything or sends anything, and never
+  contacts LinkedIn. It writes files to a local folder, and I read and edit them before deciding whether to
+  apply or send a message myself.
 - **Polite, official sources only.** It reads companies' own job feeds, respects every site's robots.txt,
   paces its requests, and never reads LinkedIn or Indeed.
 
@@ -85,11 +97,12 @@ flowchart LR
 
 These stay on my Mac only; git ignores them and a pre-commit check blocks them:
 
-- `evidence/`: my performance reviews, peer reviews, self reviews, resume and verified metrics
+- `evidence/`: my performance reviews, peer reviews, self reviews, resume, verified metrics and
+  `impact_of_my_work.md`
 - `style_examples/`: example cover letters
 - `settings.yaml`: my real settings, including the companies I follow and my personal word lists
   (employer-internal terms, codenames, and names from my work history that the claim check watches for)
-- `output/` and `Applications.xlsx`: generated resumes, cover letters and my application log
+- `output/` and `Applications.xlsx`: generated resumes, cover letters, recruiter messages and my application log
 - `data/`: the local database and logs
 - `.env`: the Claude API key
 
@@ -128,11 +141,26 @@ Then:
 | Test the job feeds without using Claude | `.venv/bin/python run_daily.py --dry-run` |
 | Run once now (fetch, filter, score) | `.venv/bin/python run_daily.py` |
 | Turn the 10 AM daily run on or off | `.venv/bin/python setup_schedule.py` or `.venv/bin/python setup_schedule.py --off` |
+| Run the offline tests (no API calls) | `.venv/bin/python -m unittest discover tests` and `.venv-mcp/bin/python -m unittest tests.test_impact_reader` |
 | Try the evidence tools without Claude | `.venv-mcp/bin/python -m mcp_server.cli search "release program"` |
 | Query the agent's results without Claude | `.venv-mcp/bin/python -m mcp_server.postings query --from 2026-11-01 --to 2026-11-30 --min 8` |
 
 To turn on the private-file safety checks, run `git config core.hooksPath .githooks`. Claude Code picks up
 the career-evidence server from `.mcp.json` when it's started in this folder.
+
+## What each output folder holds
+
+For each role I choose, `output/<date>/<Company>_<Role>/` holds:
+
+| File | What it is |
+|---|---|
+| `<Name>_Resume_<Company>_<Role>.docx` | The tailored resume |
+| `<Name>_Cover_Letter_<Company>_<Role>.docx` | The cover letter |
+| `<Name>_Recruiter_Message_<Company>_<Role>.txt` | A LinkedIn message to the recruiter, to send myself: a connection request note (at most 200 characters), an InMail subject (at most 200 characters) and body (120-180 words, at most 1,900 characters), and a follow-up for a week later (40-70 words). Code counts every limit and prints the counts; anything still too long after two rewrites is marked TOO LONG at the top, never cut off. Not written for "resume only" runs. |
+| `changes.txt` | Every change and why, the evidence used, every sentence's source, what was removed, and for the recruiter message: "choices", "why this company" and its claim check |
+| `sources.txt` | The verified news used, and the one web search the recruiter message may run |
+
+If the recruiter message fails, the resume and cover letter are still kept and `changes.txt` says why.
 
 ## Project layout
 
@@ -148,6 +176,7 @@ the career-evidence server from `.mcp.json` when it's started in this folder.
 | `agent/evidence_gate.py` | Finding evidence for a posting, and the claim check |
 | `agent/tailor.py`, `agent/resume.py` | Resume tailoring and Word file handling |
 | `agent/letter.py`, `agent/style.py` | Cover letter planning, drafting, critique and checks |
+| `agent/recruiter.py` | The LinkedIn message to the recruiter: choices, why this company, draft, limits, claim check |
 | `agent/personal.py` | Reads the personal word lists from `settings.yaml` (kept out of the code) |
 | `agent/generate.py`, `agent/sheet.py` | Output folders, `changes.txt` and the application log |
 | `mcp_server/postings.py` | The job-postings MCP server: answers questions about the agent's results (read-only) and writes query results to a new tab in Applications.xlsx |

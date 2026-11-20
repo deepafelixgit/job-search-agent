@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .documents import Document, Passage, load_documents
+from .documents import IMPACT_USE, NOT_CANDIDATE_EVIDENCE, Document, Passage, load_documents
 from .metrics import Metrics, load_metrics
 from .search import ABBREVIATIONS, Index, acronyms_from_text, contradicting_sentences, numbers_in, tokens
 
@@ -139,7 +139,11 @@ def search_evidence(query: str, doc_type: Optional[str] = None, period: Optional
     query: words to look for, e.g. "test lab scaling devices" or "stakeholder escalation".
            Keyword search: try a second phrasing with different words if results are thin.
     doc_type (optional): one of "manager review", "peer review", "self review", "resume",
-           "verified metrics".
+           "verified metrics", or from impact_of_my_work.md: "impact fact" (evidence of what the
+           candidate did), "my perspective" (the candidate's view, never a fact), "public product
+           fact" (what the product does for people, never what the candidate built), "my framing"
+           (preferred wording, never evidence), "good fit" (which roles an area suits).
+           Each impact_of_my_work.md result carries a "use" note saying how it may be used.
     period (optional): e.g. "2024 Year-end", "H1 2021", "2023".
     max_results: 1-10 (default 6)."""
     ev = EVIDENCE.get()
@@ -224,7 +228,11 @@ def check_claim(claim: str) -> dict:
     m = ev.metrics
     terms = [t for t in re.findall(r"[a-z0-9]+", claim.lower()) if len(t) > 2]
     metric_hits = ev.index.search(claim, top_k=4, doc_types=["verified metrics"])
-    other_hits = ev.index.search(claim, top_k=6, doc_types=["manager review", "peer review", "self review", "resume"])
+    other_hits = ev.index.search(claim, top_k=6, doc_types=["manager review", "peer review", "self review", "resume",
+                                                             "impact fact"])
+    # impact_of_my_work.md lines that are NOT evidence of what the candidate did: shown, never counted
+    view_hits = [h for h in ev.index.search(claim, top_k=3, doc_types=["my perspective", "public product fact"])
+                 if h[2] >= 0.4]
     relevant = [h for h in metric_hits + other_hits if h[2] >= 0.5]
 
     problems, warnings = [], []
@@ -284,9 +292,25 @@ def check_claim(claim: str) -> dict:
         "numbers": number_report,
         "verified_metrics_matches": [_passage_out(p, s, terms) for s, p, c in metric_hits if c >= 0.5],
         "other_supporting_passages": [_passage_out(p, s, terms) for s, p, c in other_hits if c >= 0.5],
+        "perspective_and_public_product_facts": [_passage_out(p, s, terms) for s, p, c in view_hits],
         "reminder": "Confirm each passage actually states the claim. Use numbers exactly as in "
-                    f"{m.file}. Never merge two programs or metrics into one claim.",
+                    f"{m.file}. Never merge two programs or metrics into one claim. Passages under "
+                    "perspective_and_public_product_facts never support a claim about what the candidate did: "
+                    "a perspective is the candidate's view, and a public product fact is about the product, "
+                    "never something the candidate built.",
     }
+
+
+def impact_lines() -> Dict[str, List[dict]]:
+    """Every line of impact_of_my_work.md, grouped by label (for the job agent's recruiter message
+    and cover letter). Empty if the file isn't in evidence/."""
+    ev = EVIDENCE.get()
+    out: Dict[str, List[dict]] = {}
+    for d in ev.docs:
+        if d.doc_type == "impact of my work":
+            for p in d.passages:
+                out.setdefault(p.doc_type, []).append(_passage_out(p))
+    return {"use": IMPACT_USE, "not_candidate_evidence": list(NOT_CANDIDATE_EVIDENCE), "lines": out}
 
 
 def main() -> None:

@@ -1,4 +1,4 @@
-"""Create the output folder, tailored resume, cover letter, changes.txt and
+"""Create the output folder, tailored resume, cover letter, recruiter message, changes.txt and
 sources.txt for each checked posting, then log them in Applications.xlsx."""
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import docx
 from .evidence_gate import coverage_report, find_evidence
 from .resume import resume_text
 from .letter import enabled_projects, write_letter
+from .recruiter import write_message
 from .tailor import tailor_resume
 
 ABBREVIATIONS = [
@@ -90,16 +91,37 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                                               posting_evidence, enabled_projects(settings),
                                               precheck_model=settings["models"]["scoring"])
 
+            letter_doc = "\n\n".join(p.text for p in docx.Document(str(letter_file)).paragraphs if p.text.strip())
+
+            # recruiter message: a failure here never fails the posting (resume and letter are kept)
+            progress(uid, "Writing the LinkedIn message to the recruiter…")
+            message_file = folder / f"{name_us}_Recruiter_Message_{company}_{role}.txt"
+            web_items = []
+            try:
+                message_notes, web_items = write_message(
+                    model, settings["models"]["scoring"], post, posting_evidence, news, resume_text(src),
+                    letter_doc, enabled_projects(settings), name, today, message_file,
+                    contact=str(settings["candidate"].get("message_contact") or "").strip())
+            except Exception as e:
+                with open(LOG_DIR / "generate_errors.log", "a", encoding="utf-8") as f:
+                    f.write(f"\n[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] {uid} (recruiter message)\n"
+                            f"{traceback.format_exc()}")
+                message_notes = ["", "RECRUITER MESSAGE", f"- FAILED: {e}",
+                                 "- The resume and cover letter were kept. Details: data/logs/generate_errors.log"]
+
+            files = [resume_file.name, letter_file.name]
+            files.append(message_file.name if message_file.exists() else f"{message_file.name} (not written: see "
+                                                                         "RECRUITER MESSAGE below)")
             header = [f"Changes made for: {post['company']} - {post['title']}",
                       f"Posting: {post['url']}", f"Created: {today.isoformat()}", "",
-                      "Only the Summary, Skills and Meta sections were changed. Everything else is identical.", ""]
+                      "FILES IN THIS FOLDER"] + [f"- {f}" for f in files + ["changes.txt", "sources.txt"]] + [
+                      "", "Only the Summary, Skills and Meta sections were changed. Everything else is identical.", ""]
             progress(uid, "Mapping the posting's responsibilities to your evidence…")
-            letter_doc = "\n\n".join(p.text for p in docx.Document(str(letter_file)).paragraphs if p.text.strip())
             cov = coverage_report(settings["models"]["scoring"], posting_evidence, resume_text(resume_file),
                                   letter_doc)
             (folder / "changes.txt").write_text(
                 "\n".join(header + cov["top"] + [""] + evidence_inputs(posting_evidence) + [""] + changes + [""] + cov["unused_resume"] + evidence_notes
-                          + letter_notes + [""] + cov["unused_letter"]) + "\n", encoding="utf-8")
+                          + letter_notes + [""] + cov["unused_letter"] + message_notes) + "\n", encoding="utf-8")
 
             src_lines = [f"News sources used in the cover letter for {post['company']} - {post['title']}", ""]
             if news:
@@ -111,6 +133,14 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                                   f"   Summary: {item.get('summary', '')}", ""]
             else:
                 src_lines.append("No recent news item could be verified, so the letter doesn't mention news.")
+            if web_items:
+                src_lines += ["", "Used in the recruiter message (why this company; found by one web search):", ""]
+                for i, item in enumerate(web_items, 1):
+                    src_lines += [f"{i}. {item.get('title', '')}",
+                                  f"   Publisher: {item.get('publisher', '')}",
+                                  f"   Date: {item.get('date', '') or 'not stated'}",
+                                  f"   Link: {item.get('url', '')}",
+                                  f"   Summary: {item.get('summary', '')}", ""]
             (folder / "sources.txt").write_text("\n".join(src_lines) + "\n", encoding="utf-8")
 
             sheet_rows.append((today.isoformat(), post["company"], post["title"], post["score"],

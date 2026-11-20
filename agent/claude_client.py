@@ -77,15 +77,18 @@ def ask_json(model: str, system: Any, prompt: str, schema: dict, effort: str = "
         raise ClaudeError("Claude returned an answer that wasn't valid JSON.") from None
 
 
-def ask_with_web_search(model: str, prompt: str, effort: str = "medium") -> tuple[str, List[dict]]:
-    """Let Claude search the web. Returns (final text, list of real search results)."""
+def ask_with_web_search(model: str, prompt: str, effort: str = "medium",
+                        max_searches: int = 5) -> tuple[str, List[dict]]:
+    """Let Claude search the web (at most max_searches searches). Returns (final text, list of real
+    search results)."""
+    tool = dict(WEB_SEARCH_TOOL, max_uses=max_searches)
     messages: List[dict] = [{"role": "user", "content": prompt}]
     results: List[dict] = []
     final_text = ""
     for _ in range(6):  # long searches can pause; continue them a few times
         resp = _call(
             model=model, max_tokens=16000, thinking={"type": "adaptive"},
-            output_config={"effort": effort}, tools=[WEB_SEARCH_TOOL], messages=messages,
+            output_config={"effort": effort}, tools=[tool], messages=messages,
         )
         for b in resp.content:
             if getattr(b, "type", "") == "web_search_tool_result" and isinstance(b.content, list):

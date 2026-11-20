@@ -10,6 +10,7 @@ Input (stdin, JSON):
   {"search": [{"query": "...", "max_results": 4, "doc_type": "verified metrics" (optional)}, ...],
    "check":  ["claim sentence", ...],
    "metrics": true,
+   "impact": true,                    (every impact_of_my_work.md line, grouped by label)
    "read_pdf": ["file.pdf"]}          (PDFs in style_examples/ only)
 Output (stdout, JSON): {"search": [...], "check": [...], "metrics": {...}}
 
@@ -36,6 +37,8 @@ def main() -> None:
                                                  max_results=q.get("max_results", 4))
                      for q in req.get("search", [])]
     out["check"] = [_fn(server.check_claim)(c) for c in req.get("check", [])]
+    if req.get("impact"):
+        out["impact"] = server.impact_lines()
     if req.get("read_pdf"):
         # text of PDFs in style_examples/ only (the job agent's own environment can't read PDFs)
         from pathlib import Path

@@ -188,6 +188,87 @@ def public_acronyms(*texts: str) -> set:
             for t in [raw] + raw.split("/")}
 
 
+# ------------------------------------------------------------------ positioning (CLAUDE.md standing rules)
+
+# impact_of_my_work.md lines that are never evidence of what the candidate did (same list as the server)
+NOT_CANDIDATE_EVIDENCE = ("my perspective", "public product fact", "my framing", "good fit")
+
+# Underselling words: defects in any sentence about the candidate's own work.
+UNDERSELL = ["helped", "help to", "supported", "assisted", "was involved in", "were involved in", "involved in",
+             "contributed to", "participated in", "worked on", "tried to"]
+UNDERSELL_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in UNDERSELL) + r")\b", re.I)
+BARE_TEST = re.compile(r"\b(test(?:ing)? infrastructure|test labs?|testing)\b", re.I)
+TEST_QUALIFIER = re.compile(r"\bautomated\b.*\b(hardware-in-the-loop|continuous integration)\b", re.I)
+
+POSITIONING_RULES = """POSITIONING (standing rules for every resume line, cover letter and recruiter message):
+- Never call the candidate's work just "test infrastructure", "testing" or "test lab": say "automated \
+hardware-in-the-loop test infrastructure" or "automated continuous integration (CI) testing". On its own, \
+"test infrastructure" sounds like a QA role, which the candidate's was not.
+- Lead with the outcome and the stakes (an org-wide code lockdown averted, launch dates protected, products \
+people rely on), then the number.
+- Use the strongest ownership verb the evidence supports (led, owned, drove, originated, turned around, scaled, \
+built, aligned) and never a stronger one than the evidence shows. Never undersell with "helped", "supported", \
+"assisted", "was involved in", "contributed to", "participated in", "worked on" or "tried to".
+- Name the scale the evidence states (teams, devices, programs). "I" for what the candidate did, not "we".
+- Confident is not inflated: numbers exactly as written; the boundaries in the evidence still hold.
+- The candidate's MY FRAMING lines (if given) are the preferred starting wording; they are never evidence, so \
+every fact in them still has to be in the evidence passages, verified metrics or resume."""
+
+
+def positioning_problems(sentence: str) -> List[str]:
+    """Code check for a sentence about the candidate's own work: underselling words, and test work
+    described without "automated hardware-in-the-loop" / "automated continuous integration"."""
+    out = []
+    weak = sorted({m.group(1).lower() for m in UNDERSELL_RE.finditer(sentence)})
+    if weak:
+        out.append("undersells with " + ", ".join(f'"{w}"' for w in weak) + " (use an ownership verb the evidence supports)")
+    for m in BARE_TEST.finditer(sentence):
+        before = sentence[max(0, m.start() - 70):m.start()]
+        if not TEST_QUALIFIER.search(before):
+            out.append(f'bare test wording "{m.group(1)}" (say "automated hardware-in-the-loop test infrastructure" '
+                       f'or "automated continuous integration (CI) testing")')
+            break
+    return out
+
+
+IMPACT_KINDS = ("impact fact", "my framing", "my perspective", "public product fact", "good fit")
+IMPACT_NAMES = {
+    "impact fact": "IMPACT FACTS (the candidate's own record; evidence)",
+    "my framing": "MY FRAMING (preferred wording; never evidence and never a source - every fact in it must also "
+                  "be in the evidence)",
+    "my perspective": "MY PERSPECTIVE (the candidate's own view of why the work mattered; present it as their view, "
+                      "never as a measured result)",
+    "public product fact": "PUBLIC PRODUCT FACTS (what the product does for people, from public sources; claims "
+                           "about the PRODUCT only - other teams built these features, never say or imply the "
+                           "candidate built them)",
+    "good fit": "GOOD FIT FOR (which kinds of roles each area suits; for choosing only)",
+}
+
+
+def impact_items(ev: "PostingEvidence") -> List[Tuple[str, str, str, str]]:
+    """[(id, label, location, text)] for every impact_of_my_work.md line; ids I1, I2... are stable."""
+    out = []
+    for k in IMPACT_KINDS:
+        for r in (ev.impact or {}).get(k) or []:
+            out.append((f"I{len(out) + 1}", k, r["location"], r["text"]))
+    return out
+
+
+def impact_cite(label: str, location: str) -> str:
+    return f"impact_of_my_work.md | {label} | current | {location}"
+
+
+def impact_block(ev: "PostingEvidence", kinds=("my framing", "my perspective", "public product fact", "good fit")) -> str:
+    """The impact_of_my_work.md lines for prompts, each group labeled with how it may be used."""
+    items = impact_items(ev)
+    out = []
+    for k in kinds:
+        rows = [x for x in items if x[1] == k]
+        if rows:
+            out.append(IMPACT_NAMES[k] + ":\n" + "\n".join(f"[{i}] ({loc}) {t}" for i, _, loc, t in rows))
+    return "\n\n".join(out)
+
+
 # ------------------------------------------------------------------ step 1: find evidence
 
 REQ_SCHEMA = {"type": "object", "properties": {"needs": {"type": "array", "items": {"type": "string"}}},
@@ -208,6 +289,7 @@ class PostingEvidence:
     scope_why: str = ""
     top_responsibilities: List[str] = field(default_factory=list)   # the posting's top 3, in its words
     excluded: List[Tuple[str, str]] = field(default_factory=list)   # (passage, why it was left out)
+    impact: Dict[str, List[dict]] = field(default_factory=dict)     # impact_of_my_work.md lines by label
 
     def prompt_block(self) -> str:
         lines = ["EVIDENCE PASSAGES FOUND FOR THIS POSTING (the only facts about the candidate you may use, "
@@ -295,7 +377,9 @@ def filter_evidence(model: str, cands: List[Tuple[str, dict]]) -> Tuple[List[Tup
 
 
 def find_evidence(model: str, post, filter_model: str = "") -> PostingEvidence:
-    rules = rules_from(run_batch({"metrics": True})["metrics"])
+    base = run_batch({"metrics": True, "impact": True})
+    rules = rules_from(base["metrics"])
+    impact = (base.get("impact") or {}).get("lines") or {}
     schema = {"type": "object", "properties": {
         "needs": {"type": "array", "items": {"type": "string"}},
         "top_responsibilities": {"type": "array", "items": {"type": "string"}}},
@@ -324,6 +408,8 @@ def find_evidence(model: str, post, filter_model: str = "") -> PostingEvidence:
     seen, cands = set(), []                     # (label, passage)
     for i, label in enumerate(labels):
         for h in found[2 * i].get("results", []) + found[2 * i + 1].get("results", []):
+            if h["doc_type"] in NOT_CANDIDATE_EVIDENCE:
+                continue        # perspective, public product facts, framing: given separately, never as evidence
             key = (h["source"], h["location"], h["text"][:80])
             if key not in seen:
                 seen.add(key)
@@ -341,7 +427,7 @@ def find_evidence(model: str, post, filter_model: str = "") -> PostingEvidence:
             passages.append(dict(h, id=f"E{len(passages) + 1}"))
     return PostingEvidence(needs=needs, passages=passages, rules=rules, searched=searched,
                            scope_term=reply.get("scope_term", ""), scope_why=reply.get("scope_why", ""),
-                           top_responsibilities=top, excluded=excluded)
+                           top_responsibilities=top, excluded=excluded, impact=impact)
 
 
 def scope_note(ev: PostingEvidence, where: List[str]) -> List[str]:
@@ -420,7 +506,8 @@ def titles_conflicting(sentence: str, resume_text: str) -> List[str]:
     bad = []
     for m in TITLE_PATTERN.finditer(sentence):
         t = m.group(0).strip()
-        if t.lower() not in resume_text.lower():
+        full = re.sub(r"\bTPM\b", "Technical Program Manager", re.sub(r"\bEPM\b", "Engineering Program Manager", t))
+        if t.lower() not in resume_text.lower() and full.lower() not in resume_text.lower():
             bad.append(t)
     return bad
 
@@ -448,7 +535,8 @@ For each sentence decide its TYPE:
 - "fact": anything about the candidate's own record - numbers, scope (teams, budgets, programs, reviews), \
 titles, employers, programs, actions, results, decisions made, trade-offs weighed, skills used.
 - "perspective": about the company, the role, the industry, or the candidate's view of how their experience \
-applies to what the company will need; interest in the role; a proposal to talk.
+applies to what the company will need; interest in the role; that the candidate applied for this role; a \
+proposal to talk.
 If a sentence is marked must_be_fact, it is a fact.
 
 FACT: "supported" is true only if the evidence states the same facts - different words are fine. In "added", \
@@ -464,6 +552,16 @@ for any past facts it does mention.
 NOT NEW FACTS (never list these in "added"), as long as they add no number, scope, title, outcome or decision:
 - a plain-language explanation of an internal term (e.g. what an internal build label means, what a metric measures);
 - a duration calculated from the resume's dates (e.g. "four years at Acme" from "2019 - 2023").
+- describing the candidate's test lab or test infrastructure work as "automated hardware-in-the-loop test \
+infrastructure", or their CI testing work as "automated continuous integration (CI) testing" (the candidate's \
+own stated description of that work).
+
+PUBLIC PRODUCT FACTS (if given) are facts about a product the candidate's work was behind. A clause stating \
+what that product does for people is not a new fact about the candidate if a PUBLIC PRODUCT FACT states it. \
+But if the sentence says or implies the candidate built, designed or delivered that feature, list it in \
+"added" (other teams built the features). MY PERSPECTIVE lines are the candidate's own view: a perspective \
+sentence may restate one, but a sentence presenting it as a measured result is adding a fact. MY FRAMING lines \
+are wording only and never a source.
 
 COMPANY FACTS: any specific fact about the company in any sentence (a product, launch, number, date, event or \
 plan) must appear in the JOB POSTING or VERIFIED NEWS provided; otherwise list it in "added".
@@ -510,7 +608,7 @@ def _verified_lines(rules: Rules) -> List[Tuple[str, str, str]]:
 
 def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvidence", allowed: set,
                     resume: str, public_numbers_text: str = "", check_titles: bool = False,
-                    company_text: str = "", project_text: str = "") -> List[Judged]:
+                    company_text: str = "", project_text: str = "", with_impact: bool = False) -> List[Judged]:
     """items: (sentence, must_be_fact). Code enforces the hard rules (every number in
     verified_metrics.txt - or, for perspective sentences, in the public news; no [CONFIRM]
     lines; no phrases to avoid; no unexplained internal terms; no title missing from the
@@ -535,6 +633,12 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
     verified = _verified_lines(ev.rules)
     for vid, cite, _ in verified:
         cites[vid] = cite
+    imp_label = {}
+    if with_impact:
+        for iid, lab, loc, _ in impact_items(ev):
+            imp_label[iid] = lab
+            if lab in ("my perspective", "public product fact"):     # framing is never a source
+                cites[iid] = impact_cite(lab, loc)
     cites["RESUME"] = "the candidate's resume (base resume file)"
     cites["PROJECT"] = "project facts (my_projects in settings.yaml)"
     prompt = ("SENTENCES:\n" + json.dumps([{"id": f"S{i}", "text": s, "must_be_fact": f}
@@ -546,7 +650,9 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
               + f"\n\n[RESUME]\n{resume}"
               + (f"\n\n{company_text}" if company_text else "")
               + (f"\n\n[PROJECT] PROJECT FACTS (the evidence for claims about the candidate's AI projects):\n"
-                 f"{project_text}" if project_text else ""))
+                 f"{project_text}" if project_text else "")
+              + (f"\n\n{impact_block(ev, ('my perspective', 'public product fact', 'my framing'))}"
+                 if with_impact and ev.impact else ""))
     verdicts = {v["id"]: v for v in ask_json(model, JUDGE_RULES + personal.prompt_block(), prompt, JUDGE_SCHEMA, effort="medium",
                                               max_tokens=32000)["verdicts"]}
     public_nums = set(re.findall(r"\d+(?:\.\d+)?", (public_numbers_text or "").replace(",", "")))
@@ -579,6 +685,9 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
         srcs = [cites[x] for x in (v["sources"] if v else []) if x in cites]
         if label == "fact" and not srcs and not problems:
             problems.append("no source named for this fact")
+        ids = [x for x in (v["sources"] if v else []) if x in cites]
+        if label == "fact" and ids and all(imp_label.get(x) == "my perspective" for x in ids):
+            problems.append("a perspective line is the candidate's view, not evidence of a fact")
         out.append(Judged(s, not problems, label, "; ".join(problems), srcs[0] if srcs else ""))
     return out
 

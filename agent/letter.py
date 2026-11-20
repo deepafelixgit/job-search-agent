@@ -20,7 +20,8 @@ from typing import Dict, List, Tuple
 
 from . import personal
 from .claude_client import ask_json, ask_with_web_search
-from .evidence_gate import (PostingEvidence, internal_terms, apply_scope_term, is_claim_about_candidate, judge_sentences, label_line,
+from .evidence_gate import (POSITIONING_RULES, UNDERSELL, PostingEvidence, impact_block, positioning_problems,
+                            internal_terms, apply_scope_term, is_claim_about_candidate, judge_sentences, label_line,
                             public_acronyms, replace_codenames, scope_note, split_sentences, titles_conflicting,
                             unexplained_acronyms)
 from .resume import resume_text, write_cover_letter
@@ -134,9 +135,12 @@ STANDARD = [
               "aligned (teams, directors, VPs), the trade-off, and the measurable result."),
     ("proofs", "Adds at most TWO short supporting proofs, chosen because they match the posting's stated "
                "responsibilities most directly. No single-ticket or task-level wins (e.g. unblocking one request)."),
-    ("ownership", "Uses ownership verbs for what the candidate actually did (set direction, decided, negotiated, "
-                  "aligned, led, made the call). Never \"helped\", \"supported\", \"was involved in\", \"assisted\". "
-                  "Never upgrades a role beyond what the evidence shows."),
+    ("ownership", "Uses ownership verbs for what the candidate actually did (led, owned, drove, originated, "
+                  "turned around, scaled, built, aligned, decided, negotiated). Never \"helped\", \"supported\", "
+                  "\"assisted\", \"was involved in\", \"contributed to\", \"participated in\", \"worked on\", "
+                  "\"tried to\". Never calls the work just \"test infrastructure\", \"testing\" or \"test lab\" "
+                  "(say \"automated hardware-in-the-loop test infrastructure\" or \"automated continuous "
+                  "integration (CI) testing\"). Never upgrades a role beyond what the evidence shows."),
     ("scope", "Shows scope - number of teams, executive reviews, budgets, programs - using only verified metrics."),
     ("plain_language", "Translates every Meta-internal term into plain language (an internal label gets a short "
                        "explanation). Never uses the INTERNAL SHORTHAND listed below or similar shorthand."),
@@ -159,8 +163,7 @@ HYPE = ["passionate", "thrilled", "excited", "perfect fit", "unique", "dream", "
         "i am writing to", "excited to apply", "dynamic", "fast-paced", "synergy", "proven track record",
         "esteemed", "cutting-edge", "game-changer", "in today's world", "i am confident that", "align perfectly",
         "world-class", "best-in-class", "rockstar", "ninja"]
-WEAK_VERBS = ["helped", "help to", "supported", "was involved in", "were involved in", "involved in",
-              "assisted", "contributed to", "participated in"]
+WEAK_VERBS = UNDERSELL          # underselling words (standing rule in CLAUDE.md)
 GENERIC_CLOSINGS = ["look forward to hearing", "thank you for your consideration", "hope to hear",
                     "at your earliest convenience"]
 SLOGAN_HINTS = [r"\bsomeone (has|needs|must|ought) to\b", r"\bI want to be (that|the one)\b",
@@ -253,7 +256,9 @@ PROJECT FACTS, in their wording about tools (if PROJECT FACTS don't name a tool,
 sign-off word, e.g. "Sincerely,".
 - Return each sentence labeled: "experience" (the candidate's past work, skills or results), "project" (the \
 AI project), "company" (the company, role or news), "interest" (why this company, the closing proposal). \
-Facts about the candidate are checked against the evidence automatically and removed if unsupported."""
+Facts about the candidate are checked against the evidence automatically and removed if unsupported.
+
+{POSITIONING_RULES}"""
 
 LETTER_SCHEMA = {
     "type": "object",
@@ -393,6 +398,10 @@ def automatic_checks(paragraphs: List[List[dict]], company: str = "",
                        f'the posting: "{c}"')
     out += [f'[closing] generic closing "{w}"' for w in GENERIC_CLOSINGS
             if w in " ".join(x["text"] for x in last_para).lower()]
+    for x in (x for para in paragraphs for x in para):
+        if x.get("kind") != "company" and is_claim_about_candidate(x["text"], x.get("kind", "")):
+            out += [f'[ownership] {pr}: "{x["text"]}"' for pr in positioning_problems(x["text"])
+                    if pr.startswith("bare test")]
     for t in sents:
         if any(re.search(h, t, re.I) for h in SLOGAN_HINTS):
             out.append(f'[tone] slogan-like line: "{t}"')
@@ -440,6 +449,9 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
                f"RESUME (titles, scope and results must not conflict with it):\n{resume}\n\n"
                f"JOB POSTING:\n{_posting_block(post)}\n\nRECENT NEWS ABOUT {post['company'].upper()}:\n"
                f"{news_block}\n\nPROJECT FACTS:\n{facts}\n\n{style_block()}")
+    impact = impact_block(posting_evidence, ("my framing", "my perspective", "public product fact"))
+    if impact:
+        context += "\n\nFROM impact_of_my_work.md:\n" + impact
 
     # 1. plan
     plan = ask_json(model, PLAN_RULES + personal.prompt_block(), context, PLAN_SCHEMA, effort="high")
@@ -532,7 +544,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     # claims the draft wanted but the evidence didn't support (style-only problems aren't evidence gaps)
     evidence_gaps = [(x, why) for x, why in repair_flagged
                      if not all(part.strip().startswith(("copies wording", "Meta-internal term", "tells the company",
-                                                         "names Claude"))
+                                                         "names Claude", "undersells", "bare test wording"))
                                 for part in why.split(";") if part.strip())]
     removed_section += [f'- Reworded or cut before the final check: "{x}"\n    Why: {why}'
                         for x, why in evidence_gaps]
@@ -542,10 +554,13 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
 
 
 def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evidence: PostingEvidence,
-                   projects: Dict[str, str], news: List[dict], resume: str) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
+                   projects: Dict[str, str], news: List[dict], resume: str, doc: str = "COVER LETTER",
+                   keep_empty: bool = False) -> Tuple[List[str], List[str], List[Tuple[str, str]]]:
     """Judge every sentence (in code, run last): facts about the candidate must be stated by the
     evidence (different words allowed, nothing added); perspective about the company/role needs
     no evidence but may not state an unsupported fact about the candidate's past.
+    doc names the document in changes.txt; keep_empty keeps "" for a paragraph whose every sentence
+    was removed, so the caller can match paragraphs up (the recruiter message uses both).
     Returns (kept paragraphs, changes.txt lines, removed sentences with reasons)."""
     rules = posting_evidence.rules
     news_text = " ".join(f"{n.get('title', '')} {n.get('summary', '')}" for n in news)
@@ -576,7 +591,8 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
     judged = {j.sentence: j for j in judge_sentences(model, to_judge, posting_evidence, allowed, resume,
                                                      public_numbers_text=news_text, check_titles=True,
                                                      company_text=company_text,
-                                                     project_text="\n\n".join(projects.values()))}
+                                                     project_text="\n\n".join(projects.values()),
+                                                     with_impact=True)}
     fact_numbers = numbers_in(" ".join(projects.values()))
     kept, removed, labeled = [], [], []
     for row in plan:
@@ -603,6 +619,8 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
                 hard.append("Meta-internal term(s) not translated: " + ", ".join(terms))
             if how != "project" and prescribes(s, post["company"]):
                 hard.append("tells the company what it needs")
+            if how == "project" or label.startswith("fact") or is_claim_about_candidate(s, ""):
+                hard += positioning_problems(s)
             src = copied_from(s, _evidence_text(posting_evidence, resume))
             if src:
                 hard.append(f"copies wording from the style example {src}")
@@ -616,14 +634,14 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
             else:
                 keep.append(s)
                 labeled.append(f'- {label}\n    "{s}"')
-        if keep:
+        if keep or keep_empty:
             kept.append(" ".join(keep))
-    out = ["", "COVER LETTER SCOPE WORDING (team count)"] + (scope_note(posting_evidence, letter_scope)
+    out = ["", f"{doc} SCOPE WORDING (team count)"] + (scope_note(posting_evidence, letter_scope)
                                                           or ["- No scope rule found."])
-    out += ["", "COVER LETTER CLAIM CHECK (run last: facts must match the evidence; perspective may not "
+    out += ["", f"{doc} CLAIM CHECK (run last: facts must match the evidence; perspective may not "
                 "state unsupported facts about you)"]
     out += gate_notes or ["- Nothing had to be removed."]
-    out += ["", "COVER LETTER, EVERY SENTENCE LABELED (fact: supported by document | type | review period | "
+    out += ["", f"{doc}, EVERY SENTENCE LABELED (fact: supported by document | type | review period | "
                 "location, or perspective)"] + labeled
     return kept, out, removed
 

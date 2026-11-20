@@ -2,7 +2,9 @@
 
 Every passage knows:
   source        the original file it came from (what you'd open to check it)
-  doc_type      manager review | peer review | self review | resume | verified metrics
+  doc_type      manager review | peer review | self review | resume | verified metrics, and from
+                impact_of_my_work.md: impact fact | my perspective | public product fact |
+                my framing | good fit (only "impact fact" is evidence of what the candidate did)
   period        the review period, e.g. "H1 2021", "2023 Mid-year", "2024 Year-end"
   period_note   how the period was worked out, if it wasn't printed on the page
   location      "page 12" for PDFs, or the section heading (and line numbers) otherwise
@@ -385,6 +387,65 @@ def read_plain(path: Path, doc_type: str) -> Document:
     return Document(file=path.name, doc_type=doc_type, periods=["unknown"], passages=passages, text_check="text file")
 
 
+# ------------------------------------------------------------------ impact_of_my_work.md
+
+IMPACT_FILE = "impact_of_my_work.md"
+# Each "- **Kind:** text" line becomes its own passage, labeled by what it may be used for.
+IMPACT_KINDS = {
+    "fact": "impact fact",                     # what the candidate did: evidence about the candidate
+    "boundary": "impact fact",                 # what the candidate did NOT do: evidence too (limits claims)
+    "perspective": "my perspective",           # the candidate's own view: never a measured result
+    "public fact": "public product fact",      # what the product does for people: never what the candidate built
+    "say it like this": "my framing",          # preferred wording: a guide, never evidence
+    "good fit for": "good fit",                # which roles an area suits: for choosing, never evidence
+}
+IMPACT_USE = {
+    "impact fact": "The candidate's own record of what they did (or did not do).",
+    "my perspective": "The candidate's own view of why the work mattered. Present it as their view, never as a "
+                      "measured result. It is not evidence of any fact.",
+    "public product fact": "A public fact about what the product does for people. It may be stated about the "
+                           "product only; never say or imply the candidate built the feature (other teams did).",
+    "my framing": "The candidate's preferred wording. A wording guide only, never evidence: each claim still "
+                  "needs a fact line, a review or verified_metrics.txt.",
+    "good fit": "Which kinds of roles this area suits. For choosing what to mention, never evidence.",
+}
+# Doc types that are never evidence of what the candidate did.
+NOT_CANDIDATE_EVIDENCE = ("my perspective", "public product fact", "my framing", "good fit")
+
+
+def read_impact(path: Path) -> Document:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    passages: List[Passage] = []
+    section = ""
+    for n, line in enumerate(lines, 1):
+        if line.startswith("## "):
+            section = line[3:].strip()
+            continue
+        m = re.match(r"\s*-\s*\*\*(.+?):\*\*\s*(.+)", line)
+        if section.lower().startswith("how to position"):
+            # the positioning guide: every non-empty line is the candidate's framing
+            text = line.strip().lstrip("-").strip()
+            if text and not text.startswith("---"):
+                passages.append(Passage(pid=f"impact-{len(passages)}", source=path.name, doc_type="my framing",
+                                        period="current", location=f"{section} (line {n})", text=text,
+                                        extra={"use": IMPACT_USE["my framing"]}))
+            continue
+        if not (m and section):
+            continue
+        kind = m.group(1).strip().lower()
+        doc_type = IMPACT_KINDS.get(kind)
+        if not doc_type:
+            continue
+        passages.append(Passage(pid=f"impact-{len(passages)}", source=path.name, doc_type=doc_type,
+                                period="current", location=f"{section} | {m.group(1).strip()} (line {n})",
+                                text=m.group(2).strip(), extra={"use": IMPACT_USE[doc_type]}))
+    return Document(file=path.name, doc_type="impact of my work", periods=["current"], passages=passages,
+                    text_check="text file",
+                    notes=["Each line is labeled: impact fact (evidence), my perspective (the candidate's view, "
+                           "not a fact), public product fact (about the product, never what the candidate built), "
+                           "my framing and good fit (guides, never evidence)."])
+
+
 def _period_sort(p: str):
     m = re.search(r"(20\d\d)", p)
     year = int(m.group(1)) if m else 9999
@@ -409,6 +470,9 @@ def load_documents(folder: Path) -> Tuple[List[Document], List[str]]:
         try:
             if name == TRANSCRIPTION_FILE:
                 continue                                  # merged into the performance review
+            if low == IMPACT_FILE:
+                docs.append(read_impact(path))
+                continue
             if low.endswith(".pdf") and "performance review" in low:
                 docs.append(read_manager_reviews(path, transcribed))
             elif low.endswith(".pdf") and "peer review" in low:

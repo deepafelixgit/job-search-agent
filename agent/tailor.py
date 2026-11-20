@@ -23,7 +23,8 @@ from typing import Optional
 
 from . import personal
 from .claude_client import ask_json
-from .evidence_gate import (Judged, PostingEvidence, _cite_passage, _verified_lines, apply_scope_term,
+from .evidence_gate import (POSITIONING_RULES, impact_block, positioning_problems,
+                            Judged, PostingEvidence, _cite_passage, _verified_lines, apply_scope_term,
                             internal_terms, judge_sentences, label_line, scope_note, is_claim_about_candidate, public_acronyms,
                             replace_codenames, split_sentences, titles_conflicting, unexplained_acronyms)
 from .resume import map_resume, resume_text, write_cover_letter, write_tailored_resume
@@ -90,8 +91,8 @@ from the EVIDENCE CANDIDATES (below).
 Hard rules (breaking any of these is a failure):
 - Never invent or change metrics, numbers, dates, tools, technologies, titles, team names, \
 products, scope or responsibilities. If a fact isn't in the resume, it doesn't go in.
-- Never inflate: don't upgrade verbs (e.g. "partnered" -> "led", "supported" -> "owned"), \
-and don't make scope bigger than the original states.
+- Use the strongest ownership verb the resume and evidence support, never a stronger one (e.g. \
+"partnered" never becomes "led"), and don't make scope bigger than the original states.
 - Never combine separate programs or bullets into one claim. Each Meta bullet you write must \
 come from exactly ONE original bullet (its source_id), and say nothing that isn't in that bullet.
 - NEW bullets (ids N1-N3, at most 3): only when an evidence candidate matches the posting's top \
@@ -320,10 +321,14 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
               "Use the evidence passages to decide what to lead with. Every sentence you write must state only "
               "what the resume says AND what the evidence backs; numbers must match verified_metrics.txt exactly. "
               "Every sentence will be checked automatically and removed if unsupported.")
+    framing = impact_block(evidence, ("my framing",))
+    if framing:
+        prompt += ("\n\n=== FROM impact_of_my_work.md (wording guide for the summary and Meta bullets; facts "
+                   "still only from the resume and evidence) ===\n" + framing)
     guidance_block = ("\n\nCANDIDATE'S TAILORING GUIDANCE - follow it when choosing what to lead with, what to "
                       "rank, reorder or drop, and how to word the summary. It never overrides the hard rules above: "
                       "if the two conflict, the hard rules win.\n" + guidance) if guidance else ""
-    out = ask_json(model, TAILOR_RULES + guidance_block + personal.prompt_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
+    out = ask_json(model, TAILOR_RULES + "\n\n" + POSITIONING_RULES + guidance_block + personal.prompt_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
                    effort="high", max_tokens=32000)
 
     # ---- New bullets from evidence (code checks: real sources, numbers exactly as in the sources)
@@ -522,6 +527,15 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     first = judge([s for _, _, t, _ in sanitized for s in split_sentences(t)])
     verdict = {v.sentence: v for v in first}
     # a rewritten line that fails goes back to the original wording, which is checked too
+    def new_wording_problems(text: str, orig: str) -> List[str]:
+        """Positioning problems (CLAUDE.md standing rule) that the rewrite introduced."""
+        before = set(positioning_problems(orig)) if orig else set()
+        return [x for x in positioning_problems(text) if x not in before]
+    for ln in sanitized:
+        for x in split_sentences(ln[2]):
+            pp = new_wording_problems(x, ln[3])
+            if pp and verdict[x].ok:
+                verdict[x] = Judged(x, False, verdict[x].label, "; ".join(pp), verdict[x].source)
     retry = [ln for ln in sanitized if ln[2] != ln[3] and ln[3]
              and any(not verdict[s].ok for s in split_sentences(ln[2]))]
     rewrite_failed = []                           # Claude's rewrites the evidence didn't support
