@@ -88,7 +88,8 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             changes = tailor_resume(model, src, post, resume_file,
                                     pinned_bullets=settings.get("pinned_bullets") or [],
                                 fixed_bullets=settings.get("fixed_bullets") or [],
-                                    evidence=posting_evidence, guidance=tailoring_guidance(settings))
+                                    evidence=posting_evidence, guidance=tailoring_guidance(settings),
+                                    new_bullets=int(settings.get("new_meta_bullets") or 0))
 
             progress(uid, "Searching recent news and writing cover letter…")
             letter_file = folder / f"{name_us}_Cover_Letter_{company}_{role}.docx"
@@ -219,15 +220,22 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
             folder = day_dir / f"{company}_{role.replace(' ', '_')}_resume_{n}"
             n += 1
         folder.mkdir(parents=True)
+        cost = start_meter(float(settings.get("budget_per_application") or 1.00))
         progress(uid, "Searching your evidence for what the posting asks for…")
+        set_step("Finding your evidence for the posting")
         ev = (evidence_override or {}).get(uid) or find_evidence(model, post, filter_model=settings["models"]["scoring"])
         progress(uid, "Tailoring resume (rewrite + fact-check)…")
         resume_file = folder / f"{name_us}_Resume_{company}_{role}.docx"
-        changes = tailor_resume(model, src, post, resume_file, pinned_bullets=settings.get("pinned_bullets") or [],
-                                fixed_bullets=settings.get("fixed_bullets") or [],
-                                evidence=ev, guidance=tailoring_guidance(settings))
+        set_step("Resume (rewrite + fact-check)")
+        try:
+            changes = tailor_resume(model, src, post, resume_file, pinned_bullets=settings.get("pinned_bullets") or [],
+                                    fixed_bullets=settings.get("fixed_bullets") or [],
+                                    evidence=ev, guidance=tailoring_guidance(settings),
+                                    new_bullets=int(settings.get("new_meta_bullets") or 0))
+        finally:
+            stop_meter()
         header = [f"Resume changes for: {post['company']} - {post['title']}", f"Posting: {post['url']}",
-                  f"Created: {dt.date.today().isoformat()}", f"Base resume: {src}", ""]
+                  f"Created: {dt.date.today().isoformat()}", f"Base resume: {src}", ""] + cost.report() + [""]
         (folder / "changes.txt").write_text("\n".join(header + evidence_inputs(ev) + [""] + changes) + "\n",
                                             encoding="utf-8")
         results.append({"uid": uid, "folder": str(folder), "resume": str(resume_file)})

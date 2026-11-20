@@ -44,6 +44,10 @@ models:
 # final claim check against your evidence) always run. The cost breakdown is at the top of changes.txt.
 budget_per_application: 1.00
 
+# Tailored resumes keep every Meta bullet from the base resume (reworded and reordered for the
+# posting). New bullets written from your evidence are added on top, up to this many (0 = none).
+new_meta_bullets: 0
+
 # AI projects the cover letter may describe (true = mention it, false = leave it out).
 my_projects:
   job_search_agent: true   # the daily job search agent

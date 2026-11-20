@@ -88,7 +88,7 @@ flowchart LR
 | Evidence through a local MCP server | The same search and claim check serve Claude Code and the agent, so the rules can't drift apart | An extra Python environment to maintain |
 | Verified-metrics file overrides every other document | One authoritative place for numbers; reviews can be vague or out of date | The file has to be kept up to date by hand |
 | Remove unsupported sentences rather than rewrite them freely | A shorter, true letter beats a fluent one with an invented claim | Letters sometimes come out shorter and need a human touch |
-| Tailor only the summary, skills and most recent role | Earlier roles stay exactly as written and are checked for that | Less tailoring for postings that match older experience |
+| Tailor only the summary, skills and most recent role, keeping every one of its bullets | Earlier roles stay exactly as written and are checked for that; the resume and cover letter draw on the same bullets | Less tailoring for postings that match older experience |
 | Only official job feeds, with robots.txt and pacing | Reliable data and respectful of each site | Some sites have no readable feed, so those postings must be pasted in |
 | Runs locally, web app reachable only from this Mac | Private documents never leave the machine except in requests to Claude | No access from other devices |
 | A cost budget per application (default $1), with an exact cost breakdown in `changes.txt` | Spend stays predictable: shared material is cached, the cover letter gets one review and one repair round, and news searches use the faster model | Optional polishing rounds are skipped when they don't fit the budget; the final claim check always runs |

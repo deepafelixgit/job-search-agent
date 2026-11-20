@@ -29,7 +29,6 @@ from .evidence_gate import (POSITIONING_RULES, impact_block, positioning_problem
                             replace_codenames, split_sentences, titles_conflicting, unexplained_acronyms)
 from .resume import map_resume, resume_text, write_cover_letter, write_tailored_resume
 
-MAX_META_BULLETS = 12
 
 # Plain-language versions of Meta-internal terms, used only where the meaning is identical
 VAGUE = re.compile(r"\b(drove|delivered|achieved) (gains|impact|results|improvements)\b|\bvarious\b|\bmany things\b", re.I)
@@ -258,7 +257,7 @@ def _posting_block(post) -> str:
 
 def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
                   pinned_bullets: List[str] = (), evidence: Optional[PostingEvidence] = None,
-                  fixed_bullets: List[str] = (), guidance: str = "") -> List[str]:
+                  fixed_bullets: List[str] = (), guidance: str = "", new_bullets: int = 0) -> List[str]:
     """Write the tailored resume to out_path. Returns the lines for changes.txt.
 
     pinned_bullets (from settings.yaml) are always included, character for
@@ -320,7 +319,10 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
               f"\n\n=== JOB POSTING ===\n{_posting_block(post)}\n\n=== {evidence.prompt_block()}\n\n"
               "Use the evidence passages to decide what to lead with. Every sentence you write must state only "
               "what the resume says AND what the evidence backs; numbers must match verified_metrics.txt exactly. "
-              "Every sentence will be checked automatically and removed if unsupported.")
+              "Every sentence will be checked automatically and removed if unsupported."
+              + ("\n\nEvery original Meta bullet is kept, so rank and reword them; don't drop any. "
+                 + ("NEW BULLETS ARE OFF: leave new_bullets empty." if new_bullets <= 0 else
+                    f"Write at most {min(3, new_bullets)} new bullet(s).")))
     framing = impact_block(evidence, ("my framing",))
     if framing:
         prompt += ("\n\n=== FROM impact_of_my_work.md (wording guide for the summary and Meta bullets; facts "
@@ -334,7 +336,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     # ---- New bullets from evidence (code checks: real sources, numbers exactly as in the sources)
     new_b: Dict[str, Tuple[str, str, List[str]]] = {}
     new_rejected: List[str] = []
-    for nb in out["new_bullets"][:3]:
+    for nb in out["new_bullets"][:max(0, min(3, new_bullets))]:
         srcs = [x for x in nb["evidence_ids"] if x in cand_text]
         text = nb["text"].strip()
         extra = numbers_in(text) - numbers_in(" ".join(cand_text[x] for x in srcs))
@@ -573,11 +575,12 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     for _, items in plan_groups:
         items[:] = [[b, (t if b in pins else final[("BULLET", b)])] for b, t in items
                     if b in pins or final[("BULLET", b)]]
-    # ---- Keep the top 12 Meta bullets by match to the posting's top 3 responsibilities (pinned always kept)
+    # ---- Every original and pinned Meta bullet is kept; new bullets from evidence only up to
+    # new_meta_bullets in settings.yaml (best match to the posting first)
     present = [b for _, items in plan_groups for b, _ in items]
-    others = sorted([b for b in present if b not in pins], key=lambda b: rank.get(b, (999, ""))[0])
-    keep_ids = set(pins) | set(others[:max(0, MAX_META_BULLETS - len([b for b in present if b in pins]))])
-    dropped_rank = [b for b in others if b not in keep_ids]
+    new_present = sorted([b for b in present if b in new_b], key=lambda b: rank.get(b, (999, ""))[0])
+    keep_ids = {b for b in present if b not in new_b} | set(new_present[:max(0, new_bullets)])
+    dropped_rank = [b for b in new_present if b not in keep_ids]
     dropped_text = {b: t for _, items in plan_groups for b, t in items if b in dropped_rank}
     for _, items in plan_groups:
         items[:] = [it for it in items if it[0] in keep_ids]
@@ -667,11 +670,10 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
             elif text != bullets[bid][1]:
                 lines += [f"- {bid} reworded. Why: {bullet_why.get(bid, '')}",
                           f"  BEFORE: {bullets[bid][1]}", f"  AFTER:  {text}"]
-    lines += ["", f"META BULLETS DROPPED (only the top {MAX_META_BULLETS} by match to the posting's top 3 "
-                  "responsibilities are kept; pinned bullets are always kept)"]
-    lines += [f"- {b} (rank {rank.get(b, (999, ''))[0] if b in rank else 'not ranked'}): "
-              f"{rank.get(b, (0, drop_why.get(b, 'ranked below the top ' + str(MAX_META_BULLETS))))[1]}\n"
-              f"  DROPPED: {dropped_text[b]}" for b in dropped_rank] or ["- None."]
+    lines += ["", f"META BULLETS: every original and pinned bullet is kept; new bullets from evidence are "
+                  f"added only up to new_meta_bullets in settings.yaml (now {max(0, new_bullets)})"]
+    lines += [f"- {b} (rank {rank.get(b, (999, ''))[0] if b in rank else 'not ranked'}): new bullet not added "
+              f"(over the limit)\n  NOT ADDED: {dropped_text[b]}" for b in dropped_rank] or ["- No bullet was dropped."]
     lines += new_rejected
     lines += ["", "SUMMARY RULE (second sentence names 2-3 program types in the posting's terms)"]
     lines.append(f"- Program types: {', '.join(out['summary_program_types'])}. "
