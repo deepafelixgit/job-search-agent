@@ -551,7 +551,12 @@ for any past facts it does mention.
 
 NOT NEW FACTS (never list these in "added"), as long as they add no number, scope, title, outcome or decision:
 - a plain-language explanation of an internal term (e.g. what an internal build label means, what a metric measures);
-- a duration calculated from the resume's dates (e.g. "four years at Acme" from "2019 - 2023").
+- a plain-language REPLACEMENT for an internal term or codename with the same meaning: any APPROVED PLAIN-LANGUAGE \
+TRANSLATION, a commercial name for its codename, or a plain description of an internal meeting, alert or review \
+(e.g. "build triage meetings" for an internal meeting name). The writer is required to remove internal terms, so \
+the changed name is never an added fact;
+- a duration calculated from the resume's dates (e.g. "four years at Acme" from "2019 - 2023"), or timing that \
+follows from them (e.g. "since leaving Acme" for work dated after the Acme role ended).
 - describing the candidate's test lab or test infrastructure work as "automated hardware-in-the-loop test \
 infrastructure", or their CI testing work as "automated continuous integration (CI) testing" (the candidate's \
 own stated description of that work).
@@ -566,7 +571,10 @@ are wording only and never a source.
 COMPANY FACTS: any specific fact about the company in any sentence (a product, launch, number, date, event or \
 plan) must appear in the JOB POSTING or VERIFIED NEWS provided; otherwise list it in "added".
 
-Be strict about facts and generous about wording."""
+Be strict about facts and generous about wording. "added" is only for a number, scope, title, outcome, decision, \
+ownership level or connection the evidence does not state. If the sentence states the same facts in other words \
+(you'd call it "close", "mostly consistent" or "a rewording"), it is supported: never mark a sentence unsupported \
+just to be strict."""
 
 JUDGE_SCHEMA = {
     "type": "object",
