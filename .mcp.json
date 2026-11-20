@@ -10,6 +10,17 @@
       "env": {
         "PYTHONPATH": "."
       }
+    },
+    "job-postings": {
+      "type": "stdio",
+      "command": ".venv-mcp/bin/python",
+      "args": [
+        "-m",
+        "mcp_server.postings"
+      ],
+      "env": {
+        "PYTHONPATH": "."
+      }
     }
   }
 }

@@ -129,6 +129,7 @@ Then:
 | Run once now (fetch, filter, score) | `.venv/bin/python run_daily.py` |
 | Turn the 10 AM daily run on or off | `.venv/bin/python setup_schedule.py` or `.venv/bin/python setup_schedule.py --off` |
 | Try the evidence tools without Claude | `.venv-mcp/bin/python -m mcp_server.cli search "release program"` |
+| Query the agent's results without Claude | `.venv-mcp/bin/python -m mcp_server.postings query --from 2026-11-01 --to 2026-11-30 --min 8` |
 
 To turn on the private-file safety checks, run `git config core.hooksPath .githooks`. Claude Code picks up
 the career-evidence server from `.mcp.json` when it's started in this folder.
@@ -149,6 +150,7 @@ the career-evidence server from `.mcp.json` when it's started in this folder.
 | `agent/letter.py`, `agent/style.py` | Cover letter planning, drafting, critique and checks |
 | `agent/personal.py` | Reads the personal word lists from `settings.yaml` (kept out of the code) |
 | `agent/generate.py`, `agent/sheet.py` | Output folders, `changes.txt` and the application log |
+| `mcp_server/postings.py` | The job-postings MCP server: answers questions about the agent's results (read-only) and writes query results to a new tab in Applications.xlsx |
 | `mcp_server/` | The career-evidence MCP server: search, verified metrics, claim check (`candidate.py` reads your name and abbreviations from `settings.yaml`) |
 | `CLAUDE.md` | Rules Claude Code follows when working on resumes and letters in this project |
 

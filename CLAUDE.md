@@ -19,6 +19,20 @@ server, and only make claims it supports.
   evidence or leave it out.
 - When you show the candidate a claim, cite the source document, review period, and page or section.
 
+## Questions about the agent's results
+
+For questions about postings the agent has found or scored (by date, company, score, role or
+location), use the **job-postings** MCP server. It reads data/jobs.db read-only.
+
+- When the user asks to see or list postings, use `export_to_spreadsheet`: it adds a new tab to
+  Applications.xlsx in the same format as the main tab (with clickable links) and opens the file.
+  Give the tab a short name that describes the query (e.g. "Nov 8+", "Google Nov 1-15"), then
+  reply with the tab name and how many postings it holds.
+- Use `query_postings` for counts or quick checks in the chat, `get_posting` for one posting's
+  details, and `list_companies` to find a company's exact name.
+- If the user's wording is ambiguous (for example "above 8"), say which reading you used.
+- If Applications.xlsx is open in Excel, ask the user to close it and try again.
+
 ## Committing and pushing
 
 - After the user approves a code change, commit it locally with a clear message.
