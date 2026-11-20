@@ -130,10 +130,9 @@ the evidence passages, verified metrics, resume, and the impact_of_my_work.md li
 what the team builds). hiring_manager_wants: what the hiring manager would most want to see.
 2. ranked_areas: the top three areas of the candidate's work, closest match first (the sections of \
 impact_of_my_work.md, or other evidence), each with why it matches. Use the GOOD FIT FOR lines as a guide.
-3. chain: for the top area, the chain from the candidate's work to its outcome, one link per item, e.g. \
-"automated hardware-in-the-loop test infrastructure" -> "a passing automated build every few hours for 16 \
-feature teams" -> "glasses people wear every day launched on schedule" -> "blind and low-vision people use \
-them for independence". Each link names the line that backs it: backed_by = fact | perspective | public \
+3. chain: for the top area, the chain from the candidate's work to its outcome, one link per item (see the \
+CHAIN EXAMPLE under CANDIDATE POSITIONING, if given: what the work made possible, then the launch or result, \
+then who benefits). Each link names the line that backs it: backed_by = fact | perspective | public \
 product fact, and source = the id (I.., E.., V<line>) or "resume". Leave out any link no line backs. A \
 perspective link must read as the candidate's view ("that work kept developers productive"), never as a \
 measured number. A public product fact is about the product; never that the candidate built the feature.
@@ -221,11 +220,11 @@ The exact role title, that the candidate has applied, the single most relevant t
 about {BODY_MIN_WORDS - 15}-{BODY_MAX_WORDS - 25} words:
    a. First paragraph: what the candidate applied for - the exact role title and that they applied ("I \
 applied for the <exact role title> role", never "I've applied"). No date.
-   b. Who they are in one or two sentences: "Staff TPM at Meta Reality Labs" plus the top area (CHOICES), AND \
-why that work mattered: the outcome it led to, from the chain (MY PERSPECTIVE as their view; PUBLIC PRODUCT \
-FACTS as facts about the product). Depth wanted, e.g. "I owned the critical path for the automated \
-hardware-in-the-loop test infrastructure behind Ray-Ban Meta, glasses that blind and low-vision people now use \
-to read menus and get around hands-free." - not "I worked on smart glasses".
+   b. Who they are in one or two sentences: the WHO I AM line under CANDIDATE POSITIONING, word for word, plus \
+the top area (CHOICES), AND why that work mattered: the outcome it led to, from the chain (MY PERSPECTIVE as \
+their view; PUBLIC PRODUCT FACTS as facts about the product). The depth wanted is shown by the DEPTH EXAMPLE \
+under CANDIDATE POSITIONING: name the program, what the candidate owned and who the product helps - never just \
+the product category.
    c. The two proof points from CHOICES, each with its number. Don't repeat the one used in (b).
    d. Why this company in one or two sentences, from WHY THIS COMPANY; leave it out if reason_type is "left out".
    e. A clear, low-pressure ask: a 15-minute call, or whether they're the right person for this role and if \
@@ -281,8 +280,9 @@ def automatic_checks(draft: dict, parts: Dict[str, str], post, letter_text: str)
         out.append(f'[title] the body\'s first paragraph doesn\'t name the exact role title "{post["title"]}"')
     if title not in parts["follow_up"].lower():
         out.append(f'[title] the follow-up doesn\'t name the exact role title "{post["title"]}"')
-    if "staff tpm" not in parts["body"].lower():
-        out.append('[who] the body doesn\'t say "Staff TPM at Meta Reality Labs"')
+    who = personal.positioning().get("who_i_am", "")
+    if who and who.lower() not in parts["body"].lower():
+        out.append(f'[who] the body doesn\'t say "{who}" (WHO I AM in settings.yaml)')
     every = ([("note", x) for x in draft["note"]] + [("body", x) for p in draft["body"] for x in p]
              + [("follow-up", x) for x in draft["follow_up"]])
     numbered = [x for p in draft["body"] for x in p if x["kind"] == "experience" and re.search(r"\d", x["text"])]
@@ -374,7 +374,7 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
     notes: List[str] = []
 
     # A. choices
-    a = ask_json(model, STEP_A_RULES + personal.prompt_block(), context, STEP_A_SCHEMA, effort="high")
+    a = ask_json(model, STEP_A_RULES + personal.prompt_block() + personal.positioning_block(), context, STEP_A_SCHEMA, effort="high")
     notes += ["", "RECRUITER MESSAGE: CHOICES",
               f"1. What this role exists to deliver: {a['role_delivers']}",
               f"   What the hiring manager would most want to see: {a['hiring_manager_wants']}",
@@ -424,7 +424,7 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
                               keep_empty=True)
 
     # C. draft
-    draft = _clean(ask_json(model, WRITE_RULES + personal.prompt_block(), f"{full_context}\n\n{plan}",
+    draft = _clean(ask_json(model, WRITE_RULES + personal.prompt_block() + personal.positioning_block(), f"{full_context}\n\n{plan}",
                             DRAFT_SCHEMA, effort="high"))
 
     # D. code checks + claim-check pre-check (scoring model), up to 2 revisions
@@ -438,13 +438,13 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
         notes += ["", f"RECRUITER MESSAGE CHECKS (round {rnd})"] + ([f"- {p}" for p in problems] or ["- Nothing to fix."])
         if not problems:
             break
-        draft = _clean(ask_json(model, REVISE_RULES + personal.prompt_block(),
+        draft = _clean(ask_json(model, REVISE_RULES + personal.prompt_block() + personal.positioning_block(),
                                 f"{full_context}\n\n{plan}\n\nYOUR DRAFT:\n{_draft_text(draft)}\n\nPROBLEMS:\n"
                                 + "\n".join(problems), DRAFT_SCHEMA, effort="high"))
 
     # E. limits: the model shortens, code never cuts
     def shorten(d: dict, over: List[str]) -> dict:
-        return _clean(ask_json(model, SHORTEN_RULES + personal.prompt_block(),
+        return _clean(ask_json(model, SHORTEN_RULES + personal.prompt_block() + personal.positioning_block(),
                                f"{full_context}\n\n{plan}\n\nYOUR DRAFT:\n{_draft_text(d)}\n\nOVER THE LIMIT:\n"
                                + "\n".join(over), DRAFT_SCHEMA, effort="medium"))
     draft, _, fit_notes = fit_to_limits(draft, lambda d: over_limits(assemble(d, url, name, contact)), shorten)

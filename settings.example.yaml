@@ -65,6 +65,12 @@ pinned_bullets:
 
 # Personal word lists used when tailoring and writing (kept here, not in the code).
 personal:
+  positioning:                   # how your work is positioned (examples guide depth only, never facts)
+    who_i_am: "Senior TPM at Example Company"
+    level: "a Senior TPM who led programs across Example Company's flagship products"
+    stakes_examples: "a launch date protected, a release freeze averted, products people rely on"
+    depth_example: "I led the release program behind Example Product, which people now use to ..."
+    chain_example: '"my program" -> "what it made possible for the teams" -> "the launch" -> "who benefits"'
   internal_terms: ["internal shorthand", "team nickname"]   # never written unless explained
   explain_terms: ["internal-label"]                         # allowed only with a short explanation
   translations:                                             # approved plain-language swaps

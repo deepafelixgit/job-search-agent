@@ -6,6 +6,8 @@
   codename_words     internal codenames (also read from verified_metrics.txt)
   experience_words   employers, products and schools from your own history: a sentence naming
                      one of these is about you, so it must be backed by evidence
+  positioning        how the work is positioned: who_i_am, level, stakes_examples, depth_example,
+                     chain_example (examples for the resume, letter and recruiter message prompts)
   blocked            companies never searched, scored or written for:
                        names, name_prefixes (unless the name contains one of `allowed`),
                        hosts (career sites never read), words_in_posting
@@ -72,6 +74,24 @@ def experience_match(sentence: str) -> Optional[re.Match]:
 def readable(pattern: str) -> str:
     """'\\bbelow the plan\\b' -> 'below the plan' (for showing a translation in a prompt)."""
     return pattern.replace("\\b", "").replace("\\", "")
+
+
+def positioning() -> dict:
+    """personal.positioning in settings.yaml: who_i_am, level, stakes_examples, depth_example, chain_example."""
+    d = _data().get("positioning") or {}
+    return {k: str(v).strip() for k, v in d.items() if str(v or "").strip()}
+
+
+def positioning_block() -> str:
+    """The candidate's own positioning examples, appended to the resume, letter and message prompts."""
+    p = positioning()
+    names = [("level", "Write about the candidate's work at the level of"),
+             ("stakes_examples", "Outcomes and stakes to lead with (when the evidence states them)"),
+             ("who_i_am", "WHO I AM (how the recruiter message introduces the candidate)"),
+             ("depth_example", "DEPTH EXAMPLE (follow its depth, never take facts from it)"),
+             ("chain_example", "CHAIN EXAMPLE (a chain from the work to its outcome)")]
+    lines = [f"- {label}: {p[k]}" for k, label in names if p.get(k)]
+    return ("\n\nCANDIDATE POSITIONING (from settings.yaml):\n" + "\n".join(lines)) if lines else ""
 
 
 def prompt_block() -> str:

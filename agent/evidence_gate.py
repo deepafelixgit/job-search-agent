@@ -204,8 +204,8 @@ POSITIONING_RULES = """POSITIONING (standing rules for every resume line, cover 
 - Never call the candidate's work just "test infrastructure", "testing" or "test lab": say "automated \
 hardware-in-the-loop test infrastructure" or "automated continuous integration (CI) testing". On its own, \
 "test infrastructure" sounds like a QA role, which the candidate's was not.
-- Lead with the outcome and the stakes (an org-wide code lockdown averted, launch dates protected, products \
-people rely on), then the number.
+- Write at the level given under CANDIDATE POSITIONING (if given). Lead with the outcome and the stakes \
+(what was averted or protected, who relies on the result), then the number.
 - Use the strongest ownership verb the evidence supports (led, owned, drove, originated, turned around, scaled, \
 built, aligned) and never a stronger one than the evidence shows. Never undersell with "helped", "supported", \
 "assisted", "was involved in", "contributed to", "participated in", "worked on" or "tried to".

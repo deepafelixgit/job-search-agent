@@ -477,7 +477,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
                  "- STYLE EXAMPLES: none found - style_examples/ is empty, so no tone reference was used.")
 
     # 2. draft
-    letter = ask_json(model, WRITE_RULES + personal.prompt_block(), f"{context}\n\nPLAN:\n{plan_text}", LETTER_SCHEMA, effort="high")
+    letter = ask_json(model, WRITE_RULES + personal.prompt_block() + personal.positioning_block(), f"{context}\n\nPLAN:\n{plan_text}", LETTER_SCHEMA, effort="high")
     paragraphs = _paragraphs_from(letter, name)
 
     # 3-4. critique and revise. Each round also runs the claim check, so sentences that would
@@ -504,7 +504,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
         if not failed and not auto and not critique["sentences"]:
             notes.append("- Nothing to fix.")
             break
-        revised = ask_json(model, REVISE_RULES + personal.prompt_block(),
+        revised = ask_json(model, REVISE_RULES + personal.prompt_block() + personal.positioning_block(),
                            f"{context}\n\nPLAN:\n{plan_text}\n\nYOUR DRAFT:\n{_body(paragraphs)}\n\n"
                            f"CRITIQUE:\n{json.dumps(critique, indent=1, ensure_ascii=False)}\n\nAUTOMATIC CHECKS:\n"
                            + ("\n".join(auto) or "(none failed)"), LETTER_SCHEMA, effort="high")
@@ -520,7 +520,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
         notes += ["", f"COVER LETTER REPAIR (pass {rep}: sentences the claim check would remove, reworded to the evidence)"]
         notes += [f'- "{sent}"\n    Would fail: {why}' for sent, why in would_fail]
         repair_flagged += would_fail
-        fixed = ask_json(model, REPAIR_RULES + personal.prompt_block(),
+        fixed = ask_json(model, REPAIR_RULES + personal.prompt_block() + personal.positioning_block(),
                          f"{context}\n\nPLAN:\n{plan_text}\n\nLETTER:\n{_body(paragraphs)}\n\nWOULD BE REMOVED:\n"
                          + "\n".join(f'- "{sent}" ({why})' for sent, why in would_fail),
                          LETTER_SCHEMA, effort="high")

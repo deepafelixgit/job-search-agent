@@ -39,10 +39,8 @@ Why the candidate's work mattered, by area. The career-evidence server labels ea
   hardware-in-the-loop test infrastructure" or "automated continuous integration (CI) testing". On its own,
   "test infrastructure" sounds like a QA role, which theirs was not. The evidence check treats these as the
   same work as the "test lab" in the record.
-- Position the work confidently, at the level of a Staff TPM who led programs across Meta's
-  first-of-their-kind wearables:
-  - Lead with the outcome and the stakes (an org-wide code lockdown averted, launch dates protected,
-    products people rely on), then the number.
+- Position the work confidently, at the level in settings.yaml (`personal.positioning.level`):
+  - Lead with the outcome and the stakes (`personal.positioning.stakes_examples`), then the number.
   - Use the strongest ownership verb the record supports: led, owned, drove, originated, turned around,
     scaled, built, aligned. Never a stronger one than the record shows.
   - Never undersell with "helped", "supported", "assisted", "was involved in", "contributed to",

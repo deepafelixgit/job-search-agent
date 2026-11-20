@@ -328,7 +328,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     guidance_block = ("\n\nCANDIDATE'S TAILORING GUIDANCE - follow it when choosing what to lead with, what to "
                       "rank, reorder or drop, and how to word the summary. It never overrides the hard rules above: "
                       "if the two conflict, the hard rules win.\n" + guidance) if guidance else ""
-    out = ask_json(model, TAILOR_RULES + "\n\n" + POSITIONING_RULES + guidance_block + personal.prompt_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
+    out = ask_json(model, TAILOR_RULES + "\n\n" + POSITIONING_RULES + guidance_block + personal.prompt_block() + personal.positioning_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
                    effort="high", max_tokens=32000)
 
     # ---- New bullets from evidence (code checks: real sources, numbers exactly as in the sources)

@@ -78,8 +78,8 @@ class Counting(unittest.TestCase):
 
 class Shortening(unittest.TestCase):
     LONG_NOTE = ("I applied for the Staff Technical Program Manager, Wearables Platform role, and I owned the "
-                 "critical path for the automated hardware-in-the-loop test infrastructure behind Ray-Ban Meta "
-                 "across 16 feature teams. Would you be open to a short call?")
+                 "critical path for the automated hardware-in-the-loop test infrastructure behind Example Glasses "
+                 "across 12 feature teams. Would you be open to a short call?")
     SHORT_NOTE = "I applied for the Staff TPM role and led automated CI testing for 16 teams. Open to a call?"
 
     def measure(self, d):
@@ -134,15 +134,15 @@ class Wording(unittest.TestCase):
     def test_underselling_words_are_flagged(self):
         for w in ("helped", "supported", "assisted", "was involved in", "contributed to", "participated in",
                   "worked on", "tried to"):
-            self.assertTrue(positioning_problems(f"I {w} the Orion launch."), w)
-        self.assertFalse(positioning_problems("I led the Orion launch as release captain."))
+            self.assertTrue(positioning_problems(f"I {w} the Example Product launch."), w)
+        self.assertFalse(positioning_problems("I led the Example Product launch as release captain."))
 
     def test_bare_test_wording_is_flagged(self):
-        for s in ("I scaled the test lab from 1 to 215+ devices.", "I owned the test infrastructure.",
+        for s in ("I scaled the test lab from 1 to 100+ devices.", "I owned the test infrastructure.",
                   "I ran testing for 16 teams."):
             self.assertTrue(any("bare test" in p for p in positioning_problems(s)), s)
-        for s in ("I owned the automated hardware-in-the-loop test infrastructure behind Ray-Ban Meta.",
-                  "I led automated continuous integration (CI) testing for 16 feature teams."):
+        for s in ("I owned the automated hardware-in-the-loop test infrastructure behind Example Glasses.",
+                  "I led automated continuous integration (CI) testing for 12 feature teams."):
             self.assertFalse(positioning_problems(s), s)
 
     def test_clean_strips_emoji_and_model_written_greetings(self):
