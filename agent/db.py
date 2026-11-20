@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS run_failures (
 
 # Columns added after the first version; older databases get them automatically.
 NEW_COLUMNS = [("postings", "posted", "TEXT"), ("pending_sheet_rows", "url", "TEXT"),
-               ("postings", "source", "TEXT")]       # source: "manual" = added with "Score a posting"
+               ("postings", "source", "TEXT"),
+               ("pending_sheet_rows", "score", "INTEGER"), ("pending_sheet_rows", "days", "INTEGER")]       # source: "manual" = added with "Score a posting"
 
 
 @contextmanager
@@ -201,7 +202,7 @@ def hidden_count(run_date: str, min_score: int) -> int:
 
 def postings_for_links() -> List[sqlite3.Row]:
     with connect() as c:
-        return list(c.execute("SELECT company, title, url FROM postings"))
+        return list(c.execute("SELECT company, title, url, score, posted, run_date FROM postings"))
 
 
 def postings_on(run_date: str, min_score: int) -> List[sqlite3.Row]:
@@ -222,7 +223,8 @@ def get_postings(uids: List[str]) -> List[sqlite3.Row]:
 
 def add_pending_rows(rows: List[tuple]) -> None:
     with connect() as c:
-        c.executemany("INSERT INTO pending_sheet_rows (date, company, role, url) VALUES (?,?,?,?)", rows)
+        c.executemany("INSERT INTO pending_sheet_rows (date, company, role, score, days, url) "
+                      "VALUES (?,?,?,?,?,?)", rows)
 
 
 def pending_rows() -> List[sqlite3.Row]:

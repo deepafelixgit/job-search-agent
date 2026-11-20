@@ -10,7 +10,7 @@ from typing import Callable, List
 
 from . import db
 from .config import OUTPUT_DIR, LOG_DIR, load_settings, resume_path, tailoring_guidance
-from .sheet import SpreadsheetLocked, append_rows, link_lookup, upgrade_sheet
+from .sheet import SpreadsheetLocked, append_rows, days_since_posted, info_lookup, upgrade_sheet
 from .evidence import load_evidence
 import docx
 
@@ -113,7 +113,8 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                 src_lines.append("No recent news item could be verified, so the letter doesn't mention news.")
             (folder / "sources.txt").write_text("\n".join(src_lines) + "\n", encoding="utf-8")
 
-            sheet_rows.append((today.isoformat(), post["company"], post["title"], post["url"]))
+            sheet_rows.append((today.isoformat(), post["company"], post["title"], post["score"],
+                               days_since_posted(post["posted"], post["run_date"]), post["url"]))
             results.append({"uid": uid, "ok": True, "folder": str(folder), "company": post["company"],
                             "title": post["title"]})
             progress(uid, "Done")
@@ -132,11 +133,12 @@ def record_in_spreadsheet(rows) -> dict:
     """Add rows (plus any waiting from an earlier attempt). If Excel has the
     file open, keep them waiting and tell the user."""
     waiting = db.pending_rows()
-    all_rows = [(r["date"], r["company"], r["role"], r["url"] or "") for r in waiting] + list(rows)
+    all_rows = [(r["date"], r["company"], r["role"], r["score"], r["days"], r["url"] or "")
+                for r in waiting] + list(rows)
     if not all_rows:
         return {"ok": True, "added": 0}
     try:
-        serials = append_rows(all_rows)
+        serials = append_rows(all_rows, info_lookup(db.postings_for_links()))
         db.clear_pending_rows([r["id"] for r in waiting])
         return {"ok": True, "added": len(serials)}
     except SpreadsheetLocked:
@@ -146,11 +148,12 @@ def record_in_spreadsheet(rows) -> dict:
                            "Please close it and click 'Try again'."}
 
 
-def add_link_column() -> dict:
-    """One-time upgrade of Applications.xlsx: add 'Posting Link' and fill it in
-    for existing rows from the database."""
+def upgrade_spreadsheet() -> dict:
+    """One-time upgrade of Applications.xlsx: add any missing columns (Score, Days Since
+    Posted, Posting Link) and fill them in for existing rows from the database. This also
+    happens automatically the next time documents are generated."""
     try:
-        notes = upgrade_sheet(link_lookup(db.postings_for_links()))
+        notes = upgrade_sheet(info_lookup(db.postings_for_links()))
         return {"ok": True, "notes": notes}
     except SpreadsheetLocked:
         return {"ok": False, "message": "Applications.xlsx is open in Excel. Please close it and try again."}
