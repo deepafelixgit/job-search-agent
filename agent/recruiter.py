@@ -364,7 +364,7 @@ def _clean(draft: dict) -> dict:
 
 def write_message(model: str, check_model: str, post, ev: PostingEvidence, news: List[dict], resume: str,
                   letter_text: str, projects: Dict[str, str], name: str, today: dt.date, out_path: Path,
-                  contact: str = "") -> Tuple[List[str], List[dict]]:
+                  contact: str = "", final_model: str = "") -> Tuple[List[str], List[dict]]:
     """Write the recruiter message file. Returns (changes.txt lines, web items used for sources.txt)."""
     title = post["title"].strip()
     url = post["url"] or ""
@@ -460,7 +460,7 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
         notes += ["", "RECRUITER MESSAGE LENGTH (the model shortened it; nothing was cut in code)"] + fit_notes
 
     # F. claim check, last (writing model)
-    kept, gate_notes, removed = gate(model, draft)
+    kept, gate_notes, removed = gate(final_model or model, draft)
     n_note, n_body = 1, len(draft["body"])
     final = {"note": [{"text": kept[0], "kind": "interest"}] if kept[0] else [],
              "subject": draft["subject"],

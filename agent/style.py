@@ -73,9 +73,14 @@ def _sentences(text: str) -> List[str]:
 PRONOUNS = {"i", "my", "me", "we", "our", "i'm", "i've", "i'd", "she", "her"}
 
 
+NUMBER_WORDS = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
+                "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12"}
+
+
 def _cwords(text: str) -> List[str]:
-    """Words for the copy check, ignoring pronouns ("I ran..." vs "ran..." is the same wording)."""
-    return [w for w in _words(text) if w not in PRONOUNS]
+    """Words for the copy check, ignoring pronouns ("I ran..." vs "ran..." is the same wording) and
+    treating number words as digits ("two months" = "2 months")."""
+    return [NUMBER_WORDS.get(w, w) for w in _words(text) if w not in PRONOUNS]
 
 
 def copied_from(sentence: str, evidence_text: str = "") -> str:

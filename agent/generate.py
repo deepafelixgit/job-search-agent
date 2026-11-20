@@ -56,6 +56,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
     """progress(uid, message) is called as each step finishes."""
     settings = load_settings()
     model = settings["models"]["writing"]
+    check_model = settings["models"].get("checking") or model     # resume fact-check and final claim checks
     name = settings["candidate"]["name"]
     name_us = name.replace(" ", "_")
     src = resume_path(settings)
@@ -89,14 +90,16 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                                     pinned_bullets=settings.get("pinned_bullets") or [],
                                 fixed_bullets=settings.get("fixed_bullets") or [],
                                     evidence=posting_evidence, guidance=tailoring_guidance(settings),
-                                    new_bullets=int(settings.get("new_meta_bullets") or 0))
+                                    new_bullets=int(settings.get("new_meta_bullets") or 0),
+                                    check_model=check_model)
 
             progress(uid, "Searching recent news and writing cover letter…")
             letter_file = folder / f"{name_us}_Cover_Letter_{company}_{role}.docx"
             set_step("Cover letter")
             news, letter_notes = write_letter(model, src, post, letter_file, name, today,
                                               posting_evidence, enabled_projects(settings),
-                                              precheck_model=settings["models"]["scoring"])
+                                              precheck_model=settings["models"]["scoring"],
+                                              check_model=check_model)
 
             letter_doc = "\n\n".join(p.text for p in docx.Document(str(letter_file)).paragraphs if p.text.strip())
 
@@ -109,7 +112,8 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                 message_notes, web_items = write_message(
                     model, settings["models"]["scoring"], post, posting_evidence, news, resume_text(src),
                     letter_doc, enabled_projects(settings), name, today, message_file,
-                    contact=str(settings["candidate"].get("message_contact") or "").strip())
+                    contact=str(settings["candidate"].get("message_contact") or "").strip(),
+                    final_model=check_model)
             except Exception as e:
                 with open(LOG_DIR / "generate_errors.log", "a", encoding="utf-8") as f:
                     f.write(f"\n[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] {uid} (recruiter message)\n"
@@ -231,7 +235,8 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
             changes = tailor_resume(model, src, post, resume_file, pinned_bullets=settings.get("pinned_bullets") or [],
                                     fixed_bullets=settings.get("fixed_bullets") or [],
                                     evidence=ev, guidance=tailoring_guidance(settings),
-                                    new_bullets=int(settings.get("new_meta_bullets") or 0))
+                                    new_bullets=int(settings.get("new_meta_bullets") or 0),
+                                    check_model=settings["models"].get("checking") or model)
         finally:
             stop_meter()
         header = [f"Resume changes for: {post['company']} - {post['title']}", f"Posting: {post['url']}",

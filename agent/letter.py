@@ -296,6 +296,11 @@ LETTER_SCHEMA = {
                    "closing": {"type": "string"}},
     "required": ["greeting", "paragraphs", "closing"], "additionalProperties": False,
 }
+PLAN_AND_LETTER_SCHEMA = {
+    "type": "object",
+    "properties": {"plan": PLAN_SCHEMA, "letter": LETTER_SCHEMA},
+    "required": ["plan", "letter"], "additionalProperties": False,
+}
 
 CRITIQUE_RULES = f"""You are a demanding editor who has hired many senior program leaders. Score this cover \
 letter against every point of the standard, then list EVERY sentence that falls short.
@@ -375,6 +380,19 @@ def opening_disconnected(first: str, second: str, company: str = "") -> bool:
     """A company-fact opening and the sentence after it share no idea (a rough check; the critique judges
     the meaning)."""
     return not (_ideas(first, company) & _ideas(second, company))
+
+
+TALK = re.compile(r"\b(call|talk|chat|conversation|connect|meet|speak)\b", re.I)
+ASKING = re.compile(r"\b(would you|could you|open to|happy to|glad to|I'?d (welcome|like|love)|I would (welcome|like)|"
+                    r"let me know|point me|right (person|contact)|someone else)\b", re.I)
+
+
+def is_request_to_talk(sentence: str) -> bool:
+    """"Would you be open to a 15-minute call?" - a request to talk, not a claim. It must not name the
+    candidate's experience or carry a number other than a call length."""
+    rest = re.sub(r"\b\d+[- ]minutes?\b", "", sentence)
+    return bool(TALK.search(sentence) and ASKING.search(sentence) and not _names_experience(sentence)
+                and not re.search(r"\d", rest))
 
 
 def drop_orphaned_opening(kept: List[str], first: str, company: str) -> Tuple[List[str], List[str]]:
@@ -508,7 +526,7 @@ def _paragraphs_from(letter: dict, name: str) -> List[List[dict]]:
 
 def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str, today: dt.date,
                  posting_evidence: PostingEvidence, projects: Dict[str, str],
-                 precheck_model: str = "") -> Tuple[List[dict], List[str]]:
+                 precheck_model: str = "", check_model: str = "") -> Tuple[List[dict], List[str]]:
     """Plan -> draft -> critique against the senior-letter standard -> revise -> claim check (last, in code).
     Returns (news items, lines for changes.txt)."""
     precheck_model = precheck_model or model
@@ -534,9 +552,12 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     if impact:
         context += "\n\nFROM impact_of_my_work.md:\n" + impact
 
-    # 1. plan
-    plan = ask_json(model, PLAN_RULES + personal.prompt_block(), "Plan the cover letter from the material above.",
-                    PLAN_SCHEMA, effort="high", cache_context=context)
+    # 1-2. plan and draft in ONE call (the plan comes first in the answer, then the letter written from it)
+    both = ask_json(model, PLAN_RULES + "\n\n=== THEN WRITE THE LETTER FROM YOUR PLAN ===\n\n" + WRITE_RULES
+                    + personal.prompt_block() + personal.positioning_block(),
+                    "First make the plan (\"plan\"), then write the cover letter from it (\"letter\"), using the "
+                    "material above.", PLAN_AND_LETTER_SCHEMA, effort="high", cache_context=context)
+    plan, letter = both["plan"], both["letter"]
     plan_text = json.dumps(plan, indent=1, ensure_ascii=False)
     notes = ["", "COVER LETTER PLAN",
              "- Posting responsibilities that matter most: " + "; ".join(plan["responsibilities"])]
@@ -558,9 +579,6 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     notes.append("- Style examples (tone and structure only): " + ", ".join(examples) if examples else
                  "- STYLE EXAMPLES: none found - style_examples/ is empty, so no tone reference was used.")
 
-    # 2. draft
-    letter = ask_json(model, WRITE_RULES + personal.prompt_block() + personal.positioning_block(),
-                      f"PLAN:\n{plan_text}", LETTER_SCHEMA, effort="high", cache_context=context)
     paragraphs = _paragraphs_from(letter, name)
 
     # 3. ONE critique-and-revise round. It also runs the claim check, so sentences that would fail it
@@ -614,7 +632,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
                   "the final claim check can't back is removed (listed below)."]
 
     # 5. claim check, last
-    kept, gate_notes, final_removed = _evidence_gate(model, paragraphs, post, posting_evidence, projects, news,
+    kept, gate_notes, final_removed = _evidence_gate(check_model or model, paragraphs, post, posting_evidence, projects, news,
                                                      resume)
     first_sentence = paragraphs[0][0]["text"] if paragraphs and paragraphs[0] else ""
     kept, opening_notes = drop_orphaned_opening(kept, first_sentence, post["company"])
@@ -670,6 +688,8 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
                     kind = "experience"                        # code overrides the label
                 if kind == "project":
                     row.append((s2, "project"))
+                elif is_request_to_talk(s2):
+                    row.append((s2, "talk"))                   # needs no evidence
                 else:
                     # code decides what must be judged as a fact; the judge decides the rest
                     must_fact = is_claim_about_candidate(s2, kind) and not _news_fact(s2, kind, news_text)
@@ -688,7 +708,9 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
     for row in plan:
         keep = []
         for s, how in row:
-            if how == "project":
+            if how == "talk":
+                problem, label = "", "perspective: a request to talk (needs no evidence)"
+            elif how == "project":
                 problem = ""
                 extra = sorted(numbers_in(s) - fact_numbers)
                 acr = unexplained_acronyms(s, allowed)
@@ -712,8 +734,8 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
             if how == "project" or label.startswith("fact") or is_claim_about_candidate(s, ""):
                 hard += positioning_problems(s)
             src = copied_from(s, _evidence_text(posting_evidence, resume))
-            if src:
-                hard.append(f"copies wording from the style example {src}")
+            if src:      # a style issue, not an evidence one: noted, never removed (the critique rewords it)
+                gate_notes.append(f'- Style note (kept): resembles the style example {src}: "{s}"')
             if counts_companies(s):
                 hard.append("says how many companies the job search agent covers")
             if hard:

@@ -257,7 +257,8 @@ def _posting_block(post) -> str:
 
 def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
                   pinned_bullets: List[str] = (), evidence: Optional[PostingEvidence] = None,
-                  fixed_bullets: List[str] = (), guidance: str = "", new_bullets: int = 0) -> List[str]:
+                  fixed_bullets: List[str] = (), guidance: str = "", new_bullets: int = 0,
+                  check_model: str = "") -> List[str]:
     """Write the tailored resume to out_path. Returns the lines for changes.txt.
 
     pinned_bullets (from settings.yaml) are always included, character for
@@ -331,7 +332,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
                       "rank, reorder or drop, and how to word the summary. It never overrides the hard rules above: "
                       "if the two conflict, the hard rules win.\n" + guidance) if guidance else ""
     out = ask_json(model, TAILOR_RULES + "\n\n" + POSITIONING_RULES + guidance_block + personal.prompt_block() + personal.positioning_block(), prompt, _tailor_schema(labels, gids, bids + list(pins), new_ids),
-                   effort="high", max_tokens=32000)
+                   effort="medium", max_tokens=32000)
 
     # ---- New bullets from evidence (code checks: real sources, numbers exactly as in the sources)
     new_b: Dict[str, Tuple[str, str, List[str]]] = {}
@@ -474,7 +475,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     if checks:
         vprompt = (f"FULL ORIGINAL RESUME:\n{full_text}\n\nITEMS TO CHECK (JSON):\n" +
                    json.dumps(checks, indent=1, ensure_ascii=False))
-        res = ask_json(model, VERIFY_RULES + personal.prompt_block(), vprompt, VERIFY_SCHEMA, effort="medium")
+        res = ask_json(check_model or model, VERIFY_RULES + personal.prompt_block(), vprompt, VERIFY_SCHEMA, effort="medium")
         verdicts = {v["id"]: v for v in res["verdicts"]}
     unchecked = [c["id"] for c in checks if c["id"] not in verdicts]
 
@@ -525,7 +526,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
         renamed += [f"{kind} {key}: {c}" for c in ch]
         sanitized.append([kind, key, text, orig])
     def judge(sents):          # every resume sentence is a fact about you
-        return judge_sentences(model, [(x, True) for x in sents], evidence, allowed, full_text)
+        return judge_sentences(check_model or model, [(x, True) for x in sents], evidence, allowed, full_text)
     first = judge([s for _, _, t, _ in sanitized for s in split_sentences(t)])
     verdict = {v.sentence: v for v in first}
     # a rewritten line that fails goes back to the original wording, which is checked too

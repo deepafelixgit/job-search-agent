@@ -84,7 +84,7 @@ flowchart LR
 | Decision | Why | Trade-off |
 |---|---|---|
 | Plain-code filters before any model call | Predictable, explainable, free | Rules need tuning by hand; an unusual title can slip through or be missed |
-| Score with a faster model, write with the most capable one | Scoring runs on many postings; writing runs on a few | Two models to keep current |
+| Score and write with the faster model; run the final claim checks with the most capable one | Keeps the cost per application down, while the honesty check that decides what stays gets the strongest model | Writing quality depends on the faster model; switch `models.writing` in settings.yaml if it falls short |
 | Evidence through a local MCP server | The same search and claim check serve Claude Code and the agent, so the rules can't drift apart | An extra Python environment to maintain |
 | Verified-metrics file overrides every other document | One authoritative place for numbers; reviews can be vague or out of date | The file has to be kept up to date by hand |
 | Remove unsupported sentences rather than rewrite them freely | A shorter, true letter beats a fluent one with an invented claim | Letters sometimes come out shorter and need a human touch |

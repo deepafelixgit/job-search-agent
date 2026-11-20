@@ -37,12 +37,13 @@ first_check_days: 14
 # Which Claude models to use (you normally don't need to change these).
 models:
   scoring: claude-sonnet-5-5   # scores postings; also news searches and claim pre-checks
-  writing: claude-opus-5-5     # tailored resume, fact-check, cover letter (fewer calls, best quality)
+  writing: claude-sonnet-5-5   # writes the tailored resume, cover letter and recruiter message
+  checking: claude-opus-5-5    # resume fact-check and the final claim check on every document
 
 # Target API cost (USD) for one application: resume, cover letter and recruiter message.
 # Optional polishing rounds are skipped when they would go over it; required steps (including the
 # final claim check against your evidence) always run. The cost breakdown is at the top of changes.txt.
-budget_per_application: 1.00
+budget_per_application: 1.75
 
 # Tailored resumes keep every Meta bullet from the base resume (reworded and reordered for the
 # posting). New bullets written from your evidence are added on top, up to this many (0 = none).
