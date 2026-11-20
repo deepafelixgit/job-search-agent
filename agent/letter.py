@@ -134,8 +134,10 @@ def _flat(t: str) -> str:
 STANDARD = [
     ("opening", "Opens EITHER with one sentence connecting the candidate's experience to what the role does, OR "
                 "with a specific technical or product fact from the company's own sources (the job posting or the "
-                "company's own published material) followed immediately by a sentence tying it to a problem the "
-                "candidate has handled. Never a generic news recap; never describes the role back to the company."),
+                "company's own published material) followed immediately by a sentence that refers back to that fact "
+                "and ties it to a problem the candidate has handled. A second sentence that only lists the "
+                "candidate's scope is not a tie and fails. Never a generic news recap; never describes the role back "
+                "to the company."),
     ("story", "Tells ONE story in depth: the situation, the decision made or direction set, who had to be "
               "aligned (teams, directors, VPs), the trade-off, and the measurable result."),
     ("proofs", "Adds at most TWO short supporting proofs, chosen because they match the posting's stated "
@@ -197,8 +199,12 @@ verified metrics), and the evidence ids / verified-metrics lines that back it. O
 directly. Program-level outcomes only - never a single-ticket or task-level win.
 4. opening: either (a) one sentence connecting the candidate's experience to what the role does, or (b) a \
 specific technical or product fact from the company's OWN sources (the posting, or a VERIFIED NEWS item marked \
-company_own_source) plus the next sentence tying it to a problem the candidate handled (from the evidence). No \
-generic news recap; no describing the role back to the company. Say which type and the source.
+company_own_source) plus the next sentence tying it to a problem the candidate handled. For (b), write BOTH \
+sentences here and cite in opening_source the evidence that backs the tie. The tie must refer back to the fact in \
+words and state only what the evidence says: never reuse or calculate from the company's numbers (e.g. "the other \
+85%" from "only 15%") and never characterize how much of the candidate's work was of one kind. If the evidence \
+can't back a tie like that, use (a). No generic news recap; no describing the role back to the company. Say which \
+type and the source.
 5. why_company: one plain sentence on why this company - a real reason, stated simply (cite what backs it). Tie \
 it to the candidate's work only if the link is direct; never force a comparison between unlike things.
 6. news: which VERIFIED NEWS item (if any) fits naturally and where; "none" if none fits - don't force it.
@@ -257,7 +263,8 @@ the INTERNAL SHORTHAND listed below or similar shorthand.
 - Never tell the company what it needs, should do or will require. Describe what the candidate did.
 - Company facts only from the JOB POSTING or the VERIFIED NEWS; leave news out if none fits naturally. An \
 opening company fact must come from the posting or a news item marked company_own_source, and the next \
-sentence must tie it to a problem the candidate handled.
+sentence must refer back to it and tie it to a problem the candidate handled, as the PLAN's opening does. Make the \
+tie in words: never reuse or calculate from the company's numbers.
 - Use the STYLE EXAMPLES only for tone and structure. Never copy their sentences, opening or closing line, and \
 never take facts from them.
 - Never say how many companies the job search agent covers (no "200+ companies" or similar), even though the \
@@ -345,6 +352,46 @@ ROLE_BACK = re.compile(r"\b(this role|the role|this position|the position|you're
                        r"you are (hiring|looking)|your (team|role|posting|job description))\b", re.I)
 
 
+FIRST_PERSON = re.compile(r"\b(I|I've|I'm|I'd|my|me)\b")
+IDEA_STOP = set("""that this with from into have were been their they them what which while when where whose about
+after before than then also only more most much many such some each every other both same very just across through
+within without among between over under your work team teams role company year years""".split())
+
+
+def _stem(w: str) -> str:
+    for suf in ("ations", "ation", "ings", "ing", "ers", "ies", "es", "ed", "er", "s"):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[:-len(suf)]
+    return w
+
+
+def _ideas(text: str, company: str) -> set:
+    skip = IDEA_STOP | set(re.findall(r"[a-z]+", company.lower()))
+    words = (re.sub(r"['\u2019]s$", "", w) for w in re.findall(r"[a-z][a-z'\u2019-]+", text.lower()))
+    return {_stem(w) for w in words if len(w) >= 4 and w not in skip}
+
+
+def opening_disconnected(first: str, second: str, company: str = "") -> bool:
+    """A company-fact opening and the sentence after it share no idea (a rough check; the critique judges
+    the meaning)."""
+    return not (_ideas(first, company) & _ideas(second, company))
+
+
+def drop_orphaned_opening(kept: List[str], first: str, company: str) -> Tuple[List[str], List[str]]:
+    """After the final claim check: if the letter opens with a company fact (no "I"/"my") and the next
+    sentence was removed or doesn't connect to it, drop the fact so the letter starts with the candidate."""
+    if not kept or not first or FIRST_PERSON.search(first) or not kept[0].startswith(first):
+        return kept, []
+    rest = kept[0][len(first):].strip()
+    nxt = split_sentences(rest)[0] if rest else (split_sentences(kept[1])[0] if len(kept) > 1 else "")
+    if nxt and not opening_disconnected(first, nxt, company) and rest:
+        return kept, []
+    why = ("the sentence connecting it to your work was removed by the claim check" if not rest
+           else "the next sentence doesn't connect to it")
+    return ([rest] if rest else []) + kept[1:], [
+        f'- Opening company fact dropped ({why}), so the letter starts with your experience: "{first}"']
+
+
 def _shares_run(a: str, b: str, n: int) -> bool:
     wa, wb = re.findall(r"[a-z0-9]+", a.lower()), re.findall(r"[a-z0-9]+", b.lower())
     grams = {tuple(wb[i:i + n]) for i in range(len(wb) - n + 1)}
@@ -392,8 +439,14 @@ def automatic_checks(paragraphs: List[List[dict]], company: str = "",
         elif not fp.search(second):
             out.append(f'[opening] a company-fact opening must be followed by a sentence tying it to a problem '
                        f'you handled: "{first}" / "{second}"')
-        elif third_party_news and _shares_run(first, third_party_news, 4):
-            out.append(f'[opening] opens with third-party news, not the company\'s own sources: "{first}"')
+        else:
+            if opening_disconnected(first, second, company):
+                out.append(f'[opening] the second sentence doesn\'t connect to the company fact before it. Say in '
+                           f'words, from the evidence, how your work relates to that fact (never reuse or calculate '
+                           f'from the company\'s numbers), or open instead with one sentence linking your experience '
+                           f'to what the role does: "{first}" / "{second}"')
+            if third_party_news and _shares_run(first, third_party_news, 4):
+                out.append(f'[opening] opens with third-party news, not the company\'s own sources: "{first}"')
     for i, t in enumerate(sents):
         src = copied_from(t, evidence_text)
         if src:
@@ -563,6 +616,8 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     # 5. claim check, last
     kept, gate_notes, final_removed = _evidence_gate(model, paragraphs, post, posting_evidence, projects, news,
                                                      resume)
+    first_sentence = paragraphs[0][0]["text"] if paragraphs and paragraphs[0] else ""
+    kept, opening_notes = drop_orphaned_opening(kept, first_sentence, post["company"])
     closing = next((ln.strip() for ln in (letter["closing"] or "").splitlines()
                     if ln.strip() and name.lower() not in ln.lower()), "Sincerely,")
     write_cover_letter(resume_path, out_path, today.strftime("%B %-d, %Y"), letter["greeting"],
@@ -571,6 +626,7 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
                                   post['company'], third_party, ev_text)
     words = len(re.findall(r"\b[\w'’-]+\b", " ".join(kept)))
     notes += ["", "FINAL LETTER (after the claim check)", f"- {words} words, {len(kept)} paragraphs."]
+    notes += opening_notes
     notes += [f"- Still open: {a}" for a in final_auto] or ["- Meets every automatic check."]
     removed_section = ["", "REMOVED FOR LACK OF EVIDENCE - COVER LETTER (if a claim here is true, add it to your "
                              "evidence so it's kept next time)"]
