@@ -23,7 +23,7 @@ from typing import Optional
 
 from . import personal
 from .claude_client import ask_json
-from .evidence_gate import (POSITIONING_RULES, impact_block, positioning_problems,
+from .evidence_gate import (POSITIONING_RULES, add_flag, impact_block, positioning_problems,
                             Judged, PostingEvidence, _cite_passage, _verified_lines, apply_scope_term,
                             internal_terms, judge_sentences, label_line, scope_note, is_claim_about_candidate, public_acronyms,
                             replace_codenames, split_sentences, titles_conflicting, unexplained_acronyms)
@@ -119,20 +119,6 @@ posting's vocabulary where it honestly describes what the resume already says, a
 summary speak to this role. Summary: 1-2 paragraphs, same overall length as the original. \
 For every change, give a one-sentence "why" tied to the posting."""
 
-VERIFY_RULES = """You are a strict fact-checker for a resume. For each item below, compare the \
-NEW text with its SOURCE text (and, for summary items, the full original resume).
-
-Mark faithful=false if the new text does ANY of these:
-- adds a metric, number, tool, technology, title, product, team, customer, or responsibility \
-not present in the source;
-- inflates scope or ownership (e.g. "contributed" -> "led", "a team" -> "the org", one program -> "programs");
-- combines facts from separate programs/bullets into one claim (summary items may summarize the \
-resume, but must not fuse two different programs into a single achievement);
-- changes meaning in a way the source doesn't support.
-Rewording, reordering, and using different but equivalent words is fine. The APPROVED PLAIN-LANGUAGE \
-TRANSLATIONS of Meta-internal terms listed below count as the same meaning. Be strict but fair."""
-
-
 def _resume_parts(path: Path):
     d = docx.Document(str(path))
     m = map_resume(d)
@@ -188,15 +174,6 @@ def _tailor_schema(labels: List[str], gids: List[str], bids: List[str], new_ids:
                      "bullet_ranking", "summary_program_types"],
         "additionalProperties": False,
     }
-
-
-VERIFY_SCHEMA = {
-    "type": "object",
-    "properties": {"verdicts": {"type": "array", "items": {"type": "object", "properties": {
-        "id": {"type": "string"}, "faithful": {"type": "boolean"}, "problem": {"type": "string"}},
-        "required": ["id", "faithful", "problem"], "additionalProperties": False}}},
-    "required": ["verdicts"], "additionalProperties": False,
-}
 
 
 def _words(text: str) -> set:
@@ -460,48 +437,10 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
             reverted.append(f"{pid} (pinned) was missing from the plan, so it was added at the top of "
                             f"'{dict(groups)[gid] or gid}'.")
 
-    # ---- Independent fact-check of every changed line
-    checks = []
-    for i, p in enumerate(new_summary):
-        if new_summary != summary:
-            checks.append({"id": f"SUMMARY{i + 1}", "source": "(full resume above)", "new": p})
-    if new_intro != intro:
-        checks.append({"id": "INTRO", "source": intro, "new": new_intro})
-    for _, items in plan_groups:
-        for bid, text in items:
-            if bid not in pins and bid not in new_b and text != bullets[bid][1]:   # pinned/new: not here
-                checks.append({"id": bid, "source": bullets[bid][1], "new": text})
-    verdicts = {}
-    if checks:
-        vprompt = (f"FULL ORIGINAL RESUME:\n{full_text}\n\nITEMS TO CHECK (JSON):\n" +
-                   json.dumps(checks, indent=1, ensure_ascii=False))
-        res = ask_json(check_model or model, VERIFY_RULES + personal.prompt_block(), vprompt, VERIFY_SCHEMA, effort="medium")
-        verdicts = {v["id"]: v for v in res["verdicts"]}
-    unchecked = [c["id"] for c in checks if c["id"] not in verdicts]
-
-    def failed(cid: str) -> str:
-        if cid in unchecked:
-            return "fact-check gave no verdict"
-        v = verdicts.get(cid)
-        return "" if (v is None or v["faithful"]) else v["problem"]
-
-    summary_fail = [failed(f"SUMMARY{i + 1}") for i in range(len(new_summary)) if new_summary != summary]
-    if any(summary_fail):
-        reverted.append("Summary kept as original (fact-check: " + "; ".join(f for f in summary_fail if f) + ").")
-        new_summary = summary
-    if new_intro != intro and failed("INTRO"):
-        reverted.append(f"Meta intro kept as original (fact-check: {failed('INTRO')}).")
-        new_intro = intro
-    for _, items in plan_groups:
-        for item in items:
-            bid = item[0]
-            if bid in pins or bid in new_b:
-                continue
-            if item[1] != bullets[bid][1] and failed(bid):
-                reverted.append(f"{bid} kept as original (fact-check: {failed(bid)}).")
-                item[1] = bullets[bid][1]
-
-    # ---- Evidence gate (career-evidence check_claim on every sentence; enforced here, in code)
+    # ---- Claim check: ONE call on every tailored sentence. Only the free code rules act (a number not in
+    # verified_metrics.txt, a [CONFIRM] line, a title not on the resume): a rewrite that breaks one goes back
+    # to your original wording, and a new sentence that breaks one is removed. Anything else is kept and
+    # flagged for your review. Your own original wording is never removed.
     allowed = public_acronyms(post["company"], post["title"], post["description"])
     lines_now = ([("SUMMARY", i, p, summary[i] if i < len(summary) else "") for i, p in enumerate(new_summary)]
                  + ([("INTRO", 0, new_intro, intro)] if new_intro else [])
@@ -537,36 +476,43 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     for ln in sanitized:
         for x in split_sentences(ln[2]):
             pp = new_wording_problems(x, ln[3])
-            if pp and verdict[x].ok:
-                verdict[x] = Judged(x, False, verdict[x].label, "; ".join(pp), verdict[x].source)
+            if pp:
+                v = verdict[x]
+                verdict[x] = Judged(x, False, v.label, "; ".join(([v.reason] if v.reason else []) + pp), v.source,
+                                    v.hard, v.compare)
     retry = [ln for ln in sanitized if ln[2] != ln[3] and ln[3]
-             and any(not verdict[s].ok for s in split_sentences(ln[2]))]
-    rewrite_failed = []                           # Claude's rewrites the evidence didn't support
+             and any(verdict[s].hard for s in split_sentences(ln[2]))]
+    rewrite_failed = []                           # rewrites that broke a code rule
     for ln in retry:
-        reverted.append(f"{ln[0]} {ln[1]} back to original wording (rewrite failed the evidence check).")
-        rewrite_failed += [(f"{ln[0].lower()} {ln[1]}", x, verdict[x].reason)
-                           for x in split_sentences(ln[2]) if not verdict[x].ok]
+        reverted.append(f"{ln[0]} {ln[1]} back to your original wording (the rewrite broke a code rule).")
+        rewrite_failed += [(f"{ln[0].lower()} {ln[1]}", x, verdict[x].hard)
+                           for x in split_sentences(ln[2]) if verdict[x].hard]
         ln[2] = ln[3]
-    verdict.update({v.sentence: v for v in judge(
-        [s for ln in retry for s in split_sentences(ln[2]) if s not in verdict])})
     evidence_log, removed_log = [], []
     gate_cut = set()                              # lines the evidence gate shortened or removed
     reverted_keys = {(ln[0], ln[1]) for ln in retry}
     final = {}
-    for kind, key, text, _ in sanitized:
+    for kind, key, text, orig in sanitized:
         keep = []
+        mine = text == orig and bool(orig)        # your own original wording
         for s in split_sentences(text):
-            v = verdict[s]
-            terms = internal_terms(s)
-            if terms and v.ok:
-                v = Judged(v.sentence, False, v.label, "Meta-internal term(s) not translated: " + ", ".join(terms),
-                           v.source)
-                verdict[s] = v
-            if v.ok:
+            v = verdict.get(s)
+            if v is None:                         # original wording restored above (it was never judged)
                 keep.append(s)
-                evidence_log.append(f"- {label_line(v)}\n    \"{s}\"")
-            else:
-                removed_log.append(f"- REMOVED from {kind.lower()} {key}: \"{s}\"\n    Why: {v.reason}")
+                evidence_log.append(f"- your original wording (base resume)\n    \"{s}\"")
+                continue
+            reasons = [v.reason] if not v.ok and v.reason else []
+            terms = internal_terms(s)
+            if terms:
+                reasons.append("Meta-internal term(s) not translated: " + ", ".join(terms))
+            if v.hard and not mine:
+                removed_log.append(f"- REMOVED from {kind.lower()} {key}: \"{s}\"\n    Why: {v.hard}")
+                continue
+            keep.append(s)
+            evidence_log.append(f"- {label_line(v)}\n    \"{s}\"")
+            if reasons:
+                add_flag("Resume", s, "; ".join(reasons), v.compare)
+                removed_log.append(f"- FLAGGED (kept) in {kind.lower()} {key}: \"{s}\"\n    Why: {'; '.join(reasons)}")
         final[(kind, key)] = " ".join(keep)
         if final[(kind, key)] != text:
             gate_cut.add((kind, key))
@@ -601,11 +547,6 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
         return ""
     summary_problem = summary_rule(new_summary, out["summary_program_types"])
 
-    # pinned bullets and the sections tailoring never changes (AI Projects, earlier jobs, awards):
-    # judged and reported only, never removed (one judge call for both)
-    other = [x for t in _untailored_bullets(resume_path) for x in split_sentences(t)]
-    both = judge(list(pins.values()) + other)
-    pin_checks, other_checks = both[:len(pins)], both[len(pins):]
 
     # ---- Write it
     write_tailored_resume(resume_path, out_path, {
@@ -682,7 +623,6 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     if len(lines) and lines[-1] == "META EXPERIENCE":
         lines.append("- No change.")
     lines += ["", "SAFETY CHECKS"]
-    lines.append(f"- {len(checks)} changed line(s) were fact-checked against the original resume.")
     lines += [f"- REVERTED: {r}" for r in reverted] or ["- Nothing needed to be reverted."]
     lines += check_pinned_against_evidence(list(pins.values()))
 
@@ -694,35 +634,23 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
                                                  or ["- No scope rule found in verified_metrics.txt."])
     lines += ["", "EVIDENCE USED FOR THIS POSTING (career-evidence search_evidence)"]
     lines += [f"- \"{need}\": {n} passage(s)" for need, n in evidence.searched]
-    lines += ["", "EVIDENCE CHECK - SUMMARY AND META (every sentence judged against the evidence; unsupported ones removed)"]
+    lines += ["", "EVIDENCE CHECK - SUMMARY AND META (one check of every tailored sentence; anything doubtful is "
+                  "kept and flagged for your review)"]
     lines += [f"- Codename or internal term replaced: {r}" for r in renamed] or ["- No codenames or internal terms to replace."]
-    lines += ["", "REMOVED FOR LACK OF EVIDENCE - RESUME (if a claim here is true, add it to your evidence so it's "
-                  "kept next time)"]
+    lines += ["", "REMOVED OR FLAGGED - RESUME (removed only by a code rule: a number not in verified_metrics.txt, a "
+                  "[CONFIRM] line or a title not on your resume; if a claim is true, add it to your evidence)"]
     lines += removed_log
     lines += [f"- Claude's rewrite of {where} was replaced by your original wording: \"{x}\"\n    Why: {why}"
               for where, x, why in rewrite_failed]
     if not removed_log and not rewrite_failed:
-        lines.append("- Nothing was removed.")
+        lines.append("- Nothing was removed or flagged.")
     lines += ["", "EVERY SENTENCE KEPT, LABELED (fact: supported by document | type | review period | location)"]
     lines += evidence_log
-    for pid, v in zip(pins, pin_checks):
-        lines.append(f"- Pinned {pid} (kept word for word) - {label_line(v)}\n    \"{v.sentence}\""
-                     + ("" if v.ok else f"\n    NOTE: check_claim says: {v.reason}"))
-    lines += ["", "OTHER SECTIONS (not tailored, copied from your resume; checked and reported, not removed)"]
-    flagged = [v for v in other_checks if not v.ok]
-    lines += [f"- FLAGGED: \"{v.sentence}\"\n    Why: {v.reason}" for v in flagged]
-    lines += [f"- {label_line(v)}\n    \"{v.sentence}\"" for v in other_checks if v.ok]
+    lines += [f"- Pinned {pid}: kept word for word (checked in code against verified_metrics.txt under SAFETY "
+              "CHECKS)" for pid in pins]
+    lines += ["", "OTHER SECTIONS (AI Projects, earlier jobs, awards): copied unchanged from your base resume, so they "
+                  "aren't re-checked on each application"]
     return lines
-
-
-def _untailored_bullets(path: Path) -> List[str]:
-    """Bullet text outside the Meta section (AI Projects, earlier jobs, awards)."""
-    from .resume import _is_bullet, map_resume
-    d = docx.Document(str(path))
-    m = map_resume(d)
-    meta = {i for i, _, _ in m.meta_bullets.values()}
-    return [p.text.strip() for i, p in enumerate(d.paragraphs)
-            if _is_bullet(p) and i not in meta and p.text.strip()]
 
 
 class EarlierExperienceChanged(RuntimeError):

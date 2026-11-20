@@ -23,7 +23,7 @@ from .claude_client import ask_json, ask_with_web_search, can_afford, step
 from .evidence_gate import (POSITIONING_RULES, UNDERSELL, PostingEvidence, impact_block, positioning_problems,
                             internal_terms, apply_scope_term, is_claim_about_candidate, judge_sentences, label_line,
                             public_acronyms, replace_codenames, scope_note, split_sentences, titles_conflicting,
-                            unexplained_acronyms)
+                            unexplained_acronyms, add_flag)
 from .resume import resume_text, write_cover_letter
 from .style import copied_from, echoes_line, prompt_block as style_block
 from .tailor import _posting_block, numbers_in
@@ -56,7 +56,6 @@ AI_CHECKS = re.compile(r"\b(fact-?checks?|fact-?checked|fact-?checking|checks?|c
                        r"screened|removes?|removing|unsupported)\b", re.I)
 # Rough costs (USD) used only to decide whether an optional round fits the budget per application.
 ROUND_COST = 0.15          # one critique + revise round
-REPAIR_COST = 0.10         # one repair pass (with its claim pre-check)
 AFTER_LETTER_COST = 0.40   # still required after the letter: final claim check, recruiter message, coverage report
 REVIEW_SAID = re.compile(r"\breviews? (said|noted)\b", re.I)
 
@@ -328,21 +327,6 @@ CRITIQUE_SCHEMA = {
     "required": ["scores", "sentences"], "additionalProperties": False,
 }
 
-REPAIR_RULES = WRITE_RULES + """
-
-REPAIR TASK: the claim check would remove the sentences \
-listed under WOULD BE REMOVED. Rewrite ONLY those sentences so they can be verified, and return the full \
-letter with every other sentence exactly unchanged.
-- State each fact in words close to the evidence passage or verified-metrics line it comes from (same facts, \
-same numbers, one program per sentence). Keep the judgment - the decision or trade-off - where the evidence \
-states it (e.g. "chose to delay the launch by two weeks to fix a safety issue", "documented the trade-offs for \
-work that didn't make the plan", "flaky tests caused by fixed waits instead of a ready signal"). Drop \
-framing the evidence doesn't contain.
-- Translate any Meta-internal term into plain language; never tell the company what it needs.
-- A company fact must come from the JOB POSTING or VERIFIED NEWS; otherwise cut it.
-- If a sentence can't be made verifiable, cut it and keep the paragraph coherent.
-- Stay at about 250-350 words and 3-4 paragraphs."""
-
 REVISE_RULES = WRITE_RULES + """
 
 You are revising your draft. Fix every failed point and every listed sentence, keeping what already works. \
@@ -581,15 +565,10 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
 
     paragraphs = _paragraphs_from(letter, name)
 
-    # 3. ONE critique-and-revise round. It also runs the claim check, so sentences that would fail it
-    # get reworded to the evidence (or cut) here, instead of silently disappearing at the end.
+    # 3. ONE critique-and-revise round (code checks + the critique; the claim check runs once, at the end).
     # Optional: skipped if it would push the application past its budget (settings.yaml).
     if can_afford(ROUND_COST + AFTER_LETTER_COST):
-        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume)
-        auto = automatic_checks(paragraphs, post['company'], third_party, ev_text) + [
-            f'[backed] the claim check would remove: "{sent}" ({why}). Reword it to match the evidence passage or '
-            f'verified-metrics line closely (same facts, same numbers, one program), or cut it - and keep the '
-            f'surrounding sentences coherent without it.' for sent, why in would_fail]
+        auto = automatic_checks(paragraphs, post['company'], third_party, ev_text)
         critique = ask_json(model, CRITIQUE_RULES + personal.prompt_block(),
                             f"PLAN:\n{plan_text}\n\nCOVER LETTER:\n{_body(paragraphs)}\n\n"
                             "AUTOMATIC CHECKS:\n" + ("\n".join(auto) or "(none failed)"),
@@ -614,23 +593,6 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
         notes += ["", "COVER LETTER CRITIQUE", "- Skipped to stay within the budget per application (settings.yaml: "
                   "budget_per_application). The final claim check still ran."]
 
-    # 4. repair: ONE pass rewording only the sentences the claim check would still remove (optional, budget)
-    repair_flagged: List[Tuple[str, str]] = []
-    if can_afford(REPAIR_COST + AFTER_LETTER_COST):
-        _, _, would_fail = _evidence_gate(precheck_model, paragraphs, post, posting_evidence, projects, news, resume)
-        if would_fail:
-            notes += ["", "COVER LETTER REPAIR (sentences the claim check would remove, reworded to the evidence)"]
-            notes += [f'- "{sent}"\n    Would fail: {why}' for sent, why in would_fail]
-            repair_flagged += would_fail
-            fixed = ask_json(model, REPAIR_RULES + personal.prompt_block() + personal.positioning_block(),
-                             f"PLAN:\n{plan_text}\n\nLETTER:\n{_body(paragraphs)}\n\nWOULD BE REMOVED:\n"
-                             + "\n".join(f'- "{sent}" ({why})' for sent, why in would_fail),
-                             LETTER_SCHEMA, effort="medium", cache_context=context)
-            letter, paragraphs = fixed, _paragraphs_from(fixed, name)
-    else:
-        notes += ["", "COVER LETTER REPAIR", "- Skipped to stay within the budget per application. Any sentence "
-                  "the final claim check can't back is removed (listed below)."]
-
     # 5. claim check, last
     kept, gate_notes, final_removed = _evidence_gate(check_model or model, paragraphs, post, posting_evidence, projects, news,
                                                      resume)
@@ -646,16 +608,10 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
     notes += ["", "FINAL LETTER (after the claim check)", f"- {words} words, {len(kept)} paragraphs."]
     notes += opening_notes
     notes += [f"- Still open: {a}" for a in final_auto] or ["- Meets every automatic check."]
-    removed_section = ["", "REMOVED FOR LACK OF EVIDENCE - COVER LETTER (if a claim here is true, add it to your "
+    removed_section = ["", "REMOVED BY THE CODE RULES - COVER LETTER (a number not in verified_metrics.txt, a "
+                             "[CONFIRM] line or a title not on your resume; if a claim here is true, add it to your "
                              "evidence so it's kept next time)"]
     removed_section += [f'- REMOVED in the final check: "{x}"\n    Why: {why}' for x, why in final_removed]
-    # claims the draft wanted but the evidence didn't support (style-only problems aren't evidence gaps)
-    evidence_gaps = [(x, why) for x, why in repair_flagged
-                     if not all(part.strip().startswith(("copies wording", "Meta-internal term", "tells the company",
-                                                         "names Claude", "undersells", "bare test wording"))
-                                for part in why.split(";") if part.strip())]
-    removed_section += [f'- Reworded or cut before the final check: "{x}"\n    Why: {why}'
-                        for x, why in evidence_gaps]
     if len(removed_section) == 2:
         removed_section.append("- Nothing was removed.")
     return news, notes + gate_notes + removed_section
@@ -708,51 +664,58 @@ def _evidence_gate(model: str, paragraphs: List[List[dict]], post, posting_evide
     for row in plan:
         keep = []
         for s, how in row:
+            # Only the free code rules remove a sentence (a number not in verified_metrics.txt, a [CONFIRM]
+            # line, a title not on the resume, project numbers not in the project facts). Everything else,
+            # including the judge's view, keeps the sentence and flags it for the candidate's review.
+            remove_why, flag_why, compare = "", [], ""
             if how == "talk":
-                problem, label = "", "perspective: a request to talk (needs no evidence)"
+                label = "perspective: a request to talk (needs no evidence)"
             elif how == "project":
-                problem = ""
                 extra = sorted(numbers_in(s) - fact_numbers)
                 acr = unexplained_acronyms(s, allowed)
                 if extra:
-                    problem = "number(s) not in the project facts: " + ", ".join(extra)
+                    remove_why = "number(s) not in the project facts: " + ", ".join(extra)
                 elif re.search(r"\b(MCP|Model Context Protocol|evidence server)\b", s) and "mcp_server" not in projects:
-                    problem = "mentions the MCP server, which is switched off in my_projects"
+                    remove_why = "mentions the MCP server, which is switched off in my_projects"
                 elif acr:
-                    problem = "internal term(s) not explained: " + ", ".join(acr)
+                    flag_why.append("internal term(s) not explained: " + ", ".join(acr))
                 label = "fact: supported by project facts (my_projects in settings.yaml: " + ", ".join(projects) + ")"
             else:
                 j = judged[s]
-                problem = j.reason if not j.ok else ""
-                label = label_line(j)
-            hard = []                                  # rules that apply to every sentence
+                label, compare = label_line(j), j.compare
+                if j.hard:
+                    remove_why = j.hard
+                elif not j.ok:
+                    flag_why.append(j.reason)
             terms = internal_terms(s)
             if terms:
-                hard.append("Meta-internal term(s) not translated: " + ", ".join(terms))
+                flag_why.append("Meta-internal term(s) not translated: " + ", ".join(terms))
             if how != "project" and prescribes(s, post["company"]):
-                hard.append("tells the company what it needs")
+                flag_why.append("tells the company what it needs")
             if how == "project" or label.startswith("fact") or is_claim_about_candidate(s, ""):
-                hard += positioning_problems(s)
+                flag_why += positioning_problems(s)
             src = copied_from(s, _evidence_text(posting_evidence, resume))
-            if src:      # a style issue, not an evidence one: noted, never removed (the critique rewords it)
-                gate_notes.append(f'- Style note (kept): resembles the style example {src}: "{s}"')
+            if src:
+                flag_why.append(f"resembles the style example {src}")
             if counts_companies(s):
-                hard.append("says how many companies the job search agent covers")
-            if hard:
-                problem = "; ".join(([problem] if problem else []) + hard)
-            if problem:
-                removed.append((s, problem))
-                gate_notes.append(f'- REMOVED: "{s}"\n    Why: {problem}')
-            else:
-                keep.append(s)
-                labeled.append(f'- {label}\n    "{s}"')
+                flag_why.append("says how many companies the job search agent covers")
+            if remove_why:
+                removed.append((s, remove_why))
+                gate_notes.append(f'- REMOVED (code rule): "{s}"\n    Why: {remove_why}')
+                continue
+            keep.append(s)
+            labeled.append(f'- {label}\n    "{s}"')
+            if flag_why:
+                add_flag(doc.capitalize(), s, "; ".join(flag_why), compare)
+                gate_notes.append(f'- FLAGGED (kept): "{s}"\n    Why: {"; ".join(flag_why)}')
         if keep or keep_empty:
             kept.append(" ".join(keep))
     out = ["", f"{doc} SCOPE WORDING (team count)"] + (scope_note(posting_evidence, letter_scope)
                                                           or ["- No scope rule found."])
-    out += ["", f"{doc} CLAIM CHECK (run last: facts must match the evidence; perspective may not "
-                "state unsupported facts about you)"]
-    out += gate_notes or ["- Nothing had to be removed."]
+    out += ["", f"{doc} CLAIM CHECK (run last. Removed only by the code rules: a number not in "
+                "verified_metrics.txt, a [CONFIRM] line, a title not on your resume. Anything else that looks "
+                "wrong is kept and flagged for your review)"]
+    out += gate_notes or ["- Nothing was removed or flagged."]
     out += ["", f"{doc}, EVERY SENTENCE LABELED (fact: supported by document | type | review period | "
                 "location, or perspective)"] + labeled
     return kept, out, removed

@@ -57,10 +57,11 @@ flowchart LR
 - **Evidence-grounded claims.** The resume and cover letter may only state facts found in my own documents:
   manager, peer and self reviews, my resume, and a verified-metrics file. The career-evidence MCP server finds
   the passages for each posting, and the writing prompts may use nothing else.
-- **Claim check.** After drafting, every sentence is judged against the evidence. Code rules back that up:
-  every number must appear in the verified-metrics file, internal codenames and terms are replaced, and job
-  titles must match the resume. Unsupported sentences are removed, and `changes.txt` lists each one with the
-  reason.
+- **Claim check: code rules remove, Claude flags.** Free code rules act on their own: every number must
+  appear in the verified-metrics file, lines marked [CONFIRM] can't be used, job titles must match the resume,
+  and internal codenames and terms are replaced. Then one Claude check per document judges each sentence
+  against the evidence; anything doubtful is kept and listed under "FLAGGED FOR YOUR REVIEW" at the top of
+  `changes.txt`, with the reason and the evidence to compare it against. I decide what to change.
 - **Impact without overclaiming.** `impact_of_my_work.md` records, for each area of my work, what I did (Fact),
   my own view of why it mattered (Perspective), what the product does for people with a public source (Public
   fact), my preferred wording (Say it like this) and the roles it suits (Good fit for). The MCP server labels
@@ -84,10 +85,10 @@ flowchart LR
 | Decision | Why | Trade-off |
 |---|---|---|
 | Plain-code filters before any model call | Predictable, explainable, free | Rules need tuning by hand; an unusual title can slip through or be missed |
-| Score and write with the faster model; run the final claim checks with the most capable one | Keeps the cost per application down, while the honesty check that decides what stays gets the strongest model | Writing quality depends on the faster model; switch `models.writing` in settings.yaml if it falls short |
+| Score, write and check with the faster model | Keeps the cost per application under about a dollar | Writing and checking quality depend on the faster model; switch `models.writing` or `models.checking` in settings.yaml if either falls short |
 | Evidence through a local MCP server | The same search and claim check serve Claude Code and the agent, so the rules can't drift apart | An extra Python environment to maintain |
 | Verified-metrics file overrides every other document | One authoritative place for numbers; reviews can be vague or out of date | The file has to be kept up to date by hand |
-| Remove unsupported sentences rather than rewrite them freely | A shorter, true letter beats a fluent one with an invented claim | Letters sometimes come out shorter and need a human touch |
+| Flag doubtful sentences instead of deleting them; only code rules remove | The model's judgment was wrong about half the time, and silent deletions left gaps (once, a letter's key result) | I have to read the flagged list for every application; an unflagged error is still possible |
 | Tailor only the summary, skills and most recent role, keeping every one of its bullets | Earlier roles stay exactly as written and are checked for that; the resume and cover letter draw on the same bullets | Less tailoring for postings that match older experience |
 | Only official job feeds, with robots.txt and pacing | Reliable data and respectful of each site | Some sites have no readable feed, so those postings must be pasted in |
 | Runs locally, web app reachable only from this Mac | Private documents never leave the machine except in requests to Claude | No access from other devices |

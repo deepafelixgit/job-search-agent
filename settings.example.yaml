@@ -38,7 +38,7 @@ first_check_days: 14
 models:
   scoring: claude-sonnet-5-5   # scores postings; also news searches and claim pre-checks
   writing: claude-sonnet-5-5   # writes the tailored resume, cover letter and recruiter message
-  checking: claude-opus-5-5    # resume fact-check and the final claim check on every document
+  checking: claude-sonnet-5-5  # the one claim check per document (it flags doubts for your review)
 
 # Target API cost (USD) for one application: resume, cover letter and recruiter message.
 # Optional polishing rounds are skipped when they would go over it; required steps (including the

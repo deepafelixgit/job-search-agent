@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -590,6 +591,30 @@ JUDGE_SCHEMA = {
 }
 
 
+_flags = threading.local()
+
+
+def start_flags() -> None:
+    """Start collecting sentences flagged for the candidate's review (one application, this thread)."""
+    _flags.items = []
+
+
+def add_flag(doc: str, sentence: str, reason: str, evidence: str = "") -> None:
+    items = getattr(_flags, "items", None)
+    if items is not None:
+        items.append((doc, sentence, reason, evidence))
+
+
+def flags_report() -> List[str]:
+    """changes.txt lines: every flagged sentence, with why and what to compare it against."""
+    items = getattr(_flags, "items", None) or []
+    out = [f"FLAGGED FOR YOUR REVIEW ({len(items)}): kept in the documents; check each against your records "
+           "and edit or delete it if it isn't right"]
+    for doc, sent, why, ev in items:
+        out.append(f'- {doc}: "{sent}"\n    Why flagged: {why}' + (f"\n    Compare with: {ev}" if ev else ""))
+    return out + (["- Nothing was flagged."] if not items else [])
+
+
 @dataclass
 class Judged:
     sentence: str
@@ -597,6 +622,9 @@ class Judged:
     label: str          # "fact" or "perspective"
     reason: str
     source: str
+    hard: str = ""      # problems found by the free code rules (numbers, [CONFIRM], titles): these remove the
+                        # sentence; everything else only flags it for the candidate's review
+    compare: str = ""   # the closest evidence passage, to check a flagged sentence against
 
 
 def _cite_passage(p: dict) -> str:
@@ -671,21 +699,22 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
     for i, ((s, must_fact), r) in enumerate(zip(items, checks), 1):
         v = verdicts.get(f"S{i}")
         label = "fact" if must_fact or not v else v["type"]
-        problems = []
+        hard = []           # free code rules: these remove the sentence
         for n, rep in (r.get("numbers") or {}).items():
             if not rep.get("in_verified_metrics") and not (label == "perspective" and n in public_nums):
-                problems.append(f"the number {n} is not in verified_metrics.txt")
-        problems += [p for p in r.get("problems") or [] if p.startswith("Matches a line marked [CONFIRM]")]
+                hard.append(f"the number {n} is not in verified_metrics.txt")
+        hard += [p for p in r.get("problems") or [] if p.startswith("Matches a line marked [CONFIRM]")]
         if r["verdict"].startswith("contradicted"):
-            problems += [p for p in r.get("problems") or []
-                         if " says: " not in p and not p.startswith(("The number", "The closest", "Matches a line"))]
-        acr = unexplained_acronyms(s, allowed)
-        if acr:
-            problems.append("internal term(s) not explained: " + ", ".join(acr))
+            hard += [p for p in r.get("problems") or []
+                     if " says: " not in p and not p.startswith(("The number", "The closest", "Matches a line"))]
         if check_titles:
             t = titles_conflicting(s, resume)
             if t:
-                problems.append("title not on your resume: " + ", ".join(t))
+                hard.append("title not on your resume: " + ", ".join(t))
+        problems = list(hard)
+        acr = unexplained_acronyms(s, allowed)
+        if acr:
+            problems.append("internal term(s) not explained: " + ", ".join(acr))
         if not v:
             problems.append("the judge gave no verdict")
         else:
@@ -699,7 +728,9 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
         ids = [x for x in (v["sources"] if v else []) if x in cites]
         if label == "fact" and ids and all(imp_label.get(x) == "my perspective" for x in ids):
             problems.append("a perspective line is the candidate's view, not evidence of a fact")
-        out.append(Judged(s, not problems, label, "; ".join(problems), srcs[0] if srcs else ""))
+        closest = srcs[0] if srcs else cites.get(f"S{i}-P1", "")
+        out.append(Judged(s, not problems, label, "; ".join(problems), srcs[0] if srcs else "", "; ".join(hard),
+                          closest))
     return out
 
 

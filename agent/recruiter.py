@@ -431,18 +431,14 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
                             "Write the message from the material above.", DRAFT_SCHEMA, effort="medium",
                             cache_context=shared))
 
-    # D. code checks + claim-check pre-check (scoring model), then ONE revision if it fits the budget
-    flagged: List[Tuple[str, str]] = []
+    # D. code checks, then ONE revision if it fits the budget (the claim check runs once, at the end)
     for rnd in (1,):
         if not can_afford(REVISION_COST):
             notes += ["", "RECRUITER MESSAGE CHECKS", "- Skipped to stay within the budget per application. "
                       "The final claim check still ran."]
             break
         parts = assemble(draft, url, name, contact)
-        _, _, would_fail = gate(check_model, draft)
-        auto = automatic_checks(draft, parts, post, letter_text)
-        problems = auto + [f'[claim check] would remove: "{s}" ({why})' for s, why in would_fail]
-        flagged += would_fail
+        problems = automatic_checks(draft, parts, post, letter_text)
         notes += ["", f"RECRUITER MESSAGE CHECKS (round {rnd})"] + ([f"- {p}" for p in problems] or ["- Nothing to fix."])
         if not problems:
             break
@@ -459,7 +455,7 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
     if fit_notes:
         notes += ["", "RECRUITER MESSAGE LENGTH (the model shortened it; nothing was cut in code)"] + fit_notes
 
-    # F. claim check, last (writing model)
+    # F. claim check, last (checking model): removes only code-rule failures, flags the rest
     kept, gate_notes, removed = gate(final_model or model, draft)
     n_note, n_body = 1, len(draft["body"])
     final = {"note": [{"text": kept[0], "kind": "interest"}] if kept[0] else [],
@@ -472,16 +468,19 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
 
     warnings = [f"TOO LONG: {p}" for p in still_over]
     warnings += [f"TOO SHORT after the claim check removed sentences: {p}" for p in still_under]
+    n_flagged = sum(1 for ln in gate_notes if ln.startswith("- FLAGGED"))
+    if n_flagged:
+        warnings.append(f"{n_flagged} sentence(s) flagged for your review - see FLAGGED FOR YOUR REVIEW at the top "
+                        "of changes.txt")
     if not final["note"]:
         warnings.append("The claim check removed the whole connection note; write your own before sending.")
     out_path.write_text(render(parts, warnings), encoding="utf-8")
 
     notes += gate_notes
-    notes += ["", "REMOVED FOR LACK OF EVIDENCE - RECRUITER MESSAGE"]
+    notes += ["", "REMOVED BY THE CODE RULES - RECRUITER MESSAGE (a number not in verified_metrics.txt, a "
+                  "[CONFIRM] line or a title not on your resume)"]
     notes += [f'- REMOVED in the final check: "{s}"\n    Why: {why}' for s, why in removed]
-    notes += [f'- Reworded or cut before the final check: "{s}"\n    Why: {why}' for s, why in dict(flagged).items()
-              if s not in dict(removed)]
-    if not removed and not flagged:
+    if not removed:
         notes.append("- Nothing was removed.")
     notes += ["", "RECRUITER MESSAGE: FINAL COUNTS",
               f"- Connection note: {chars(parts['note'])} of {NOTE_MAX_CHARS} characters",

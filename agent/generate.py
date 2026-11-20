@@ -15,7 +15,7 @@ from .evidence import load_evidence
 from .claude_client import set_step, start_meter, stop_meter
 import docx
 
-from .evidence_gate import coverage_report, find_evidence
+from .evidence_gate import coverage_report, find_evidence, flags_report, start_flags
 from .resume import resume_text
 from .letter import enabled_projects, write_letter
 from .recruiter import write_message
@@ -77,6 +77,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             folder = day_dir / f"{company}_{role.replace(' ', '_')}_{n}"
             n += 1
         cost = start_meter(budget)      # every Claude call for this posting is priced and added up
+        start_flags()                   # sentences the claim check flags for your review
         try:
             folder.mkdir(parents=True)
             progress(uid, "Tailoring resume (rewrite + fact-check)…")
@@ -132,7 +133,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             set_step("Coverage report")
             cov = coverage_report(settings["models"]["scoring"], posting_evidence, resume_text(resume_file),
                                   letter_doc)
-            header += cost.report() + [""]
+            header += cost.report() + [""] + flags_report() + [""]
             (folder / "changes.txt").write_text(
                 "\n".join(header + cov["top"] + [""] + evidence_inputs(posting_evidence) + [""] + changes + [""] + cov["unused_resume"] + evidence_notes
                           + letter_notes + [""] + cov["unused_letter"] + message_notes) + "\n", encoding="utf-8")
@@ -225,6 +226,7 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
             n += 1
         folder.mkdir(parents=True)
         cost = start_meter(float(settings.get("budget_per_application") or 1.00))
+        start_flags()
         progress(uid, "Searching your evidence for what the posting asks for…")
         set_step("Finding your evidence for the posting")
         ev = (evidence_override or {}).get(uid) or find_evidence(model, post, filter_model=settings["models"]["scoring"])
@@ -240,7 +242,8 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
         finally:
             stop_meter()
         header = [f"Resume changes for: {post['company']} - {post['title']}", f"Posting: {post['url']}",
-                  f"Created: {dt.date.today().isoformat()}", f"Base resume: {src}", ""] + cost.report() + [""]
+                  f"Created: {dt.date.today().isoformat()}", f"Base resume: {src}", ""] + cost.report() + [""] \
+            + flags_report() + [""]
         (folder / "changes.txt").write_text("\n".join(header + evidence_inputs(ev) + [""] + changes) + "\n",
                                             encoding="utf-8")
         results.append({"uid": uid, "folder": str(folder), "resume": str(resume_file)})
