@@ -23,7 +23,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from .claude_client import ask_json
+from .claude_client import ask_json, current_step, step
 from . import personal
 from .config import ROOT
 
@@ -641,20 +641,23 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
                 cites[iid] = impact_cite(lab, loc)
     cites["RESUME"] = "the candidate's resume (base resume file)"
     cites["PROJECT"] = "project facts (my_projects in settings.yaml)"
+    # The evidence is the same for every check in one application, so it goes first and is cached.
+    material = ("EVIDENCE PASSAGES FOR THIS POSTING:\n"
+                + "\n".join(f"[{p['id']}] ({cites[p['id']]}) {p['text']}" for p in ev.passages)
+                + "\n\nVERIFIED METRICS (authoritative):\n" + "\n".join(f"[{v}] {t}" for v, _, t in verified)
+                + f"\n\n[RESUME]\n{resume}"
+                + (f"\n\n{company_text}" if company_text else "")
+                + (f"\n\n[PROJECT] PROJECT FACTS (the evidence for claims about the candidate's AI projects):\n"
+                   f"{project_text}" if project_text else "")
+                + (f"\n\n{impact_block(ev, ('my perspective', 'public product fact', 'my framing'))}"
+                   if with_impact and ev.impact else ""))
     prompt = ("SENTENCES:\n" + json.dumps([{"id": f"S{i}", "text": s, "must_be_fact": f}
                                            for i, (s, f) in enumerate(items, 1)], indent=1, ensure_ascii=False)
-              + "\n\n" + "\n\n".join(per_sentence)
-              + "\n\nEVIDENCE PASSAGES FOR THIS POSTING:\n"
-              + "\n".join(f"[{p['id']}] ({cites[p['id']]}) {p['text']}" for p in ev.passages)
-              + "\n\nVERIFIED METRICS (authoritative):\n" + "\n".join(f"[{v}] {t}" for v, _, t in verified)
-              + f"\n\n[RESUME]\n{resume}"
-              + (f"\n\n{company_text}" if company_text else "")
-              + (f"\n\n[PROJECT] PROJECT FACTS (the evidence for claims about the candidate's AI projects):\n"
-                 f"{project_text}" if project_text else "")
-              + (f"\n\n{impact_block(ev, ('my perspective', 'public product fact', 'my framing'))}"
-                 if with_impact and ev.impact else ""))
-    verdicts = {v["id"]: v for v in ask_json(model, JUDGE_RULES + personal.prompt_block(), prompt, JUDGE_SCHEMA, effort="medium",
-                                              max_tokens=32000)["verdicts"]}
+              + "\n\n" + "\n\n".join(per_sentence))
+    with step(f"{current_step()}: claim checks"):
+        verdicts = {v["id"]: v for v in ask_json(model, JUDGE_RULES + personal.prompt_block(), prompt, JUDGE_SCHEMA,
+                                                  effort="medium", max_tokens=32000,
+                                                  cache_context=material)["verdicts"]}
     public_nums = set(re.findall(r"\d+(?:\.\d+)?", (public_numbers_text or "").replace(",", "")))
     out = []
     for i, ((s, must_fact), r) in enumerate(zip(items, checks), 1):

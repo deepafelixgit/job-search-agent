@@ -36,8 +36,13 @@ first_check_days: 14
 
 # Which Claude models to use (you normally don't need to change these).
 models:
-  scoring: claude-sonnet-5-5   # scores each posting 1-10 (many calls, so a faster model)
+  scoring: claude-sonnet-5-5   # scores postings; also news searches and claim pre-checks
   writing: claude-opus-5-5     # tailored resume, fact-check, cover letter (fewer calls, best quality)
+
+# Target API cost (USD) for one application: resume, cover letter and recruiter message.
+# Optional polishing rounds are skipped when they would go over it; required steps (including the
+# final claim check against your evidence) always run. The cost breakdown is at the top of changes.txt.
+budget_per_application: 1.00
 
 # AI projects the cover letter may describe (true = mention it, false = leave it out).
 my_projects:

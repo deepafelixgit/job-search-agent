@@ -472,7 +472,7 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     if checks:
         vprompt = (f"FULL ORIGINAL RESUME:\n{full_text}\n\nITEMS TO CHECK (JSON):\n" +
                    json.dumps(checks, indent=1, ensure_ascii=False))
-        res = ask_json(model, VERIFY_RULES + personal.prompt_block(), vprompt, VERIFY_SCHEMA, effort="high")
+        res = ask_json(model, VERIFY_RULES + personal.prompt_block(), vprompt, VERIFY_SCHEMA, effort="medium")
         verdicts = {v["id"]: v for v in res["verdicts"]}
     unchecked = [c["id"] for c in checks if c["id"] not in verdicts]
 

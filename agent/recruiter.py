@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import personal
-from .claude_client import ask_json, ask_with_web_search
+from .claude_client import ask_json, ask_with_web_search, can_afford
 from .evidence_gate import (POSITIONING_RULES, PostingEvidence, impact_block, is_claim_about_candidate,
                             positioning_problems)
 from .letter import HYPE, SLOGAN_HINTS, _evidence_gate, _shares_run
@@ -38,6 +38,7 @@ NOTE_MAX_CHARS = 200
 SUBJECT_MAX_CHARS = 200
 BODY_MIN_WORDS, BODY_MAX_WORDS, BODY_MAX_CHARS = 120, 180, 1900
 FOLLOW_MIN_WORDS, FOLLOW_MAX_WORDS = 40, 70
+REVISION_COST = 0.15   # rough USD for one revision with its claim pre-check, plus the final check and coverage report
 
 CLICHES = ["hope this message finds you well", "hope this finds you well", "came across your profile",
            "passionate about", "i'm passionate", "i am passionate", "pick your brain", "dear hiring manager",
@@ -424,12 +425,19 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
                               keep_empty=True)
 
     # C. draft
-    draft = _clean(ask_json(model, WRITE_RULES + personal.prompt_block() + personal.positioning_block(), f"{full_context}\n\n{plan}",
-                            DRAFT_SCHEMA, effort="high"))
+    # the context and plan are the same for the draft, revision and shortening, so they are cached
+    shared = f"{full_context}\n\n{plan}"
+    draft = _clean(ask_json(model, WRITE_RULES + personal.prompt_block() + personal.positioning_block(),
+                            "Write the message from the material above.", DRAFT_SCHEMA, effort="medium",
+                            cache_context=shared))
 
-    # D. code checks + claim-check pre-check (scoring model), up to 2 revisions
+    # D. code checks + claim-check pre-check (scoring model), then ONE revision if it fits the budget
     flagged: List[Tuple[str, str]] = []
-    for rnd in (1, 2):
+    for rnd in (1,):
+        if not can_afford(REVISION_COST):
+            notes += ["", "RECRUITER MESSAGE CHECKS", "- Skipped to stay within the budget per application. "
+                      "The final claim check still ran."]
+            break
         parts = assemble(draft, url, name, contact)
         _, _, would_fail = gate(check_model, draft)
         auto = automatic_checks(draft, parts, post, letter_text)
@@ -439,14 +447,14 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
         if not problems:
             break
         draft = _clean(ask_json(model, REVISE_RULES + personal.prompt_block() + personal.positioning_block(),
-                                f"{full_context}\n\n{plan}\n\nYOUR DRAFT:\n{_draft_text(draft)}\n\nPROBLEMS:\n"
-                                + "\n".join(problems), DRAFT_SCHEMA, effort="high"))
+                                f"YOUR DRAFT:\n{_draft_text(draft)}\n\nPROBLEMS:\n" + "\n".join(problems),
+                                DRAFT_SCHEMA, effort="medium", cache_context=shared))
 
     # E. limits: the model shortens, code never cuts
     def shorten(d: dict, over: List[str]) -> dict:
         return _clean(ask_json(model, SHORTEN_RULES + personal.prompt_block() + personal.positioning_block(),
-                               f"{full_context}\n\n{plan}\n\nYOUR DRAFT:\n{_draft_text(d)}\n\nOVER THE LIMIT:\n"
-                               + "\n".join(over), DRAFT_SCHEMA, effort="medium"))
+                               f"YOUR DRAFT:\n{_draft_text(d)}\n\nOVER THE LIMIT:\n" + "\n".join(over),
+                               DRAFT_SCHEMA, effort="medium", cache_context=shared))
     draft, _, fit_notes = fit_to_limits(draft, lambda d: over_limits(assemble(d, url, name, contact)), shorten)
     if fit_notes:
         notes += ["", "RECRUITER MESSAGE LENGTH (the model shortened it; nothing was cut in code)"] + fit_notes

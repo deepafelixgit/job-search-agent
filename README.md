@@ -91,6 +91,7 @@ flowchart LR
 | Tailor only the summary, skills and most recent role | Earlier roles stay exactly as written and are checked for that | Less tailoring for postings that match older experience |
 | Only official job feeds, with robots.txt and pacing | Reliable data and respectful of each site | Some sites have no readable feed, so those postings must be pasted in |
 | Runs locally, web app reachable only from this Mac | Private documents never leave the machine except in requests to Claude | No access from other devices |
+| A cost budget per application (default $1), with an exact cost breakdown in `changes.txt` | Spend stays predictable: shared material is cached, the cover letter gets one review and one repair round, and news searches use the faster model | Optional polishing rounds are skipped when they don't fit the budget; the final claim check always runs |
 | Write files for review instead of applying automatically | I stay accountable for everything sent under my name | A few minutes of review per application |
 
 ## What isn't in this repository, and why
@@ -157,7 +158,7 @@ For each role I choose, `output/<date>/<Company>_<Role>/` holds:
 | `<Name>_Resume_<Company>_<Role>.docx` | The tailored resume |
 | `<Name>_Cover_Letter_<Company>_<Role>.docx` | The cover letter |
 | `<Name>_Recruiter_Message_<Company>_<Role>.txt` | A LinkedIn message to the recruiter, to send myself: a connection request note (at most 200 characters), an InMail subject (at most 200 characters) and body (120-180 words, at most 1,900 characters), and a follow-up for a week later (40-70 words). Code counts every limit and prints the counts; anything still too long after two rewrites is marked TOO LONG at the top, never cut off. Not written for "resume only" runs. |
-| `changes.txt` | Every change and why, the evidence used, every sentence's source, what was removed, and for the recruiter message: "choices", "why this company" and its claim check |
+| `changes.txt` | At the top, the API cost of this application step by step (also logged per call in `data/logs/api_usage.log`). Then every change and why, the evidence used, every sentence's source, what was removed, and for the recruiter message: "choices", "why this company" and its claim check |
 | `sources.txt` | The verified news used, and the one web search the recruiter message may run |
 
 If the recruiter message fails, the resume and cover letter are still kept and `changes.txt` says why.

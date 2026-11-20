@@ -12,6 +12,7 @@ from . import db
 from .config import OUTPUT_DIR, LOG_DIR, load_settings, resume_path, tailoring_guidance
 from .sheet import SpreadsheetLocked, append_rows, days_since_posted, info_lookup, upgrade_sheet
 from .evidence import load_evidence
+from .claude_client import set_step, start_meter, stop_meter
 import docx
 
 from .evidence_gate import coverage_report, find_evidence
@@ -62,6 +63,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
     day_dir = OUTPUT_DIR / today.isoformat()
     day_dir.mkdir(parents=True, exist_ok=True)
     evidence, evidence_notes = load_evidence(settings)
+    budget = float(settings.get("budget_per_application") or 1.00)
 
     results, sheet_rows = [], []
     for post in db.get_postings(uids):
@@ -73,13 +75,16 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
         while folder.exists():
             folder = day_dir / f"{company}_{role.replace(' ', '_')}_{n}"
             n += 1
+        cost = start_meter(budget)      # every Claude call for this posting is priced and added up
         try:
             folder.mkdir(parents=True)
             progress(uid, "Tailoring resume (rewrite + fact-check)…")
             resume_file = folder / f"{name_us}_Resume_{company}_{role}.docx"
             progress(uid, "Searching your evidence for what the posting asks for…")
+            set_step("Finding your evidence for the posting")
             posting_evidence = (evidence_override or {}).get(uid) or \
                 find_evidence(model, post, filter_model=settings["models"]["scoring"])
+            set_step("Resume (rewrite + fact-check)")
             changes = tailor_resume(model, src, post, resume_file,
                                     pinned_bullets=settings.get("pinned_bullets") or [],
                                 fixed_bullets=settings.get("fixed_bullets") or [],
@@ -87,6 +92,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
 
             progress(uid, "Searching recent news and writing cover letter…")
             letter_file = folder / f"{name_us}_Cover_Letter_{company}_{role}.docx"
+            set_step("Cover letter")
             news, letter_notes = write_letter(model, src, post, letter_file, name, today,
                                               posting_evidence, enabled_projects(settings),
                                               precheck_model=settings["models"]["scoring"])
@@ -97,6 +103,7 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             progress(uid, "Writing the LinkedIn message to the recruiter…")
             message_file = folder / f"{name_us}_Recruiter_Message_{company}_{role}.txt"
             web_items = []
+            set_step("Recruiter message")
             try:
                 message_notes, web_items = write_message(
                     model, settings["models"]["scoring"], post, posting_evidence, news, resume_text(src),
@@ -117,8 +124,10 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
                       "FILES IN THIS FOLDER"] + [f"- {f}" for f in files + ["changes.txt", "sources.txt"]] + [
                       "", "Only the Summary, Skills and Meta sections were changed. Everything else is identical.", ""]
             progress(uid, "Mapping the posting's responsibilities to your evidence…")
+            set_step("Coverage report")
             cov = coverage_report(settings["models"]["scoring"], posting_evidence, resume_text(resume_file),
                                   letter_doc)
+            header += cost.report() + [""]
             (folder / "changes.txt").write_text(
                 "\n".join(header + cov["top"] + [""] + evidence_inputs(posting_evidence) + [""] + changes + [""] + cov["unused_resume"] + evidence_notes
                           + letter_notes + [""] + cov["unused_letter"] + message_notes) + "\n", encoding="utf-8")
@@ -146,14 +155,16 @@ def generate(uids: List[str], progress: Callable[[str, str], None], evidence_ove
             sheet_rows.append((today.isoformat(), post["company"], post["title"], post["score"],
                                days_since_posted(post["posted"], post["run_date"]), post["url"]))
             results.append({"uid": uid, "ok": True, "folder": str(folder), "company": post["company"],
-                            "title": post["title"]})
-            progress(uid, "Done")
+                            "title": post["title"], "cost": round(cost.spent, 2)})
+            progress(uid, f"Done (API cost ${cost.spent:.2f})")
         except Exception as e:  # keep going with the other postings
             with open(LOG_DIR / "generate_errors.log", "a", encoding="utf-8") as f:
                 f.write(f"\n[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] {uid}\n{traceback.format_exc()}")
             results.append({"uid": uid, "ok": False, "error": str(e), "folder": str(folder),
                             "company": post["company"], "title": post["title"]})
             progress(uid, f"Failed: {e}")
+        finally:
+            stop_meter()
 
     sheet = record_in_spreadsheet(sheet_rows)
     return {"results": results, "sheet": sheet}
