@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block main %}
+<div class="topbar"><h2>Applications being written</h2></div>
+<div class="meta">Claude Code writes them in the background on your Claude plan (no API cost), one at a time.
+  You can leave this page open; it updates by itself. To watch or answer questions as it goes, type
+  <b>/write-application</b> in Claude Code instead.</div>
+{% if error %}<div class="notice err">{{ error }}</div>{% endif %}
+{% if info %}<div class="notice ok">{{ info }}</div>{% endif %}
+<div id="state" class="meta"></div>
+<div id="resume" hidden>
+  <form method="post" action="/queue/resume" style="margin:6px 0 10px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit">Resume</button>
+    <span class="sub">Continues the paused postings from their saved drafts, after your Claude usage limit resets.</span>
+  </form>
+</div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Company</th><th>Role</th><th>Status</th><th>Note</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<script>
+  const csrf = {{ csrf|tojson }};
+  function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+  async function openFolder(path) {
+    await fetch('/open-folder', { method: 'POST', body: new URLSearchParams({ csrf, path }) });
+  }
+  async function poll() {
+    const q = await (await fetch('/api/queue')).json();
+    document.getElementById('state').textContent = q.running ? 'Claude Code is writing now.' :
+      (q.items.length ? 'Claude Code is not running right now.' : 'Nothing has been queued yet.');
+    document.getElementById('resume').hidden = !(q.paused && !q.running);
+    document.getElementById('rows').innerHTML = q.items.map(it => {
+      const btn = it.folder && (it.status === 'Ready' || it.status === 'Needs your review')
+        ? `<button class="secondary" data-path="${esc(it.folder)}">Open folder</button>` : '';
+      return `<tr><td>${esc(it.company)}</td><td>${esc(it.title)}</td><td><b>${esc(it.status)}</b></td>` +
+             `<td class="sub">${esc(it.note)}</td><td>${btn}</td></tr>`;
+    }).join('');
+    document.querySelectorAll('button[data-path]').forEach(b => b.onclick = () => openFolder(b.dataset.path));
+    setTimeout(poll, 4000);
+  }
+  poll();
+</script>
+{% endblock %}

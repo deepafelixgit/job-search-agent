@@ -12,17 +12,18 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-import anthropic
-from dotenv import dotenv_values
-
 from .config import ROOT, LOG_DIR
+
+# The anthropic library and the .env file are loaded only when an API call is actually made, so
+# code that merely imports this module (the application renderer, the document builders) never
+# loads the API library or reads the API key.
 
 # Server-side fallback: if a model declines a request, the API can retry it
 # on a suitable fallback model automatically.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
 
-_client: Optional[anthropic.Anthropic] = None
+_client = None
 
 
 class ClaudeError(RuntimeError):
@@ -166,8 +167,10 @@ def _record(requested_model: str, resp) -> None:
         pass
 
 
-def get_client() -> anthropic.Anthropic:
+def get_client():
     global _client
+    import anthropic
+    from dotenv import dotenv_values
     if _client is None:
         key = (dotenv_values(ROOT / ".env").get("ANTHROPIC_API_KEY") or "").strip()
         if not key:
@@ -177,6 +180,7 @@ def get_client() -> anthropic.Anthropic:
 
 
 def _call(**kwargs) -> Any:
+    import anthropic
     try:
         resp = get_client().beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
     except anthropic.AuthenticationError:

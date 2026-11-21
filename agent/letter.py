@@ -400,10 +400,16 @@ def _shares_run(a: str, b: str, n: int) -> bool:
     return any(tuple(wa[i:i + n]) in grams for i in range(len(wa) - n + 1))
 
 
+POSTING_ASK = re.compile(r"\b(the|this|your) (posting|job description|job posting|role|position)\b|"
+                         r"\bthe posting's\b|\b(posting|role|position) (asks|calls|looks) for\b", re.I)
+
+
 def prescribes(sentence: str, company: str) -> bool:
-    """Tells the company what it needs / should do."""
+    """Tells the company what it needs / should do. Naming the posting's own asks, attributed to the
+    posting or the role ("The role also calls for...", "The posting's first ask is..."), is not prescribing."""
     pat = re.compile(PRESCRIBING.pattern.replace("{company}", re.escape(company)), re.I)
-    return bool(pat.search(sentence)) and not re.match(r"\s*(I|I'm|I've|I'd|My)\b", sentence)
+    return (bool(pat.search(sentence)) and not re.match(r"\s*(I|I'm|I've|I'd|My)\b", sentence)
+            and not POSTING_ASK.search(sentence))
 
 
 COMPANY_COUNT = re.compile(

@@ -18,7 +18,7 @@ from pathlib import Path  # noqa: E402
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for  # noqa: E402
 
-from agent import db, manual  # noqa: E402
+from agent import app_queue, claude_runner, db, manual  # noqa: E402
 from agent.config import OUTPUT_DIR, load_settings  # noqa: E402
 from agent.generate import generate, record_in_spreadsheet  # noqa: E402
 from agent.sheet import is_open_in_excel  # noqa: E402
@@ -192,6 +192,13 @@ def create():
     back = request.form.get("run_date") or ""
     if not uids:
         return redirect(url_for("day", run_date=back, error="Please check at least one posting first."))
+    if (load_settings().get("generation_mode") or "claude_code") != "api":
+        # Claude Code (your Claude plan, no API cost) writes them, one at a time, in the background
+        posts = db.get_postings(uids)
+        app_queue.add([{"uid": p["uid"], "company": p["company"], "title": p["title"], "url": p["url"]}
+                       for p in posts])
+        ok, msg = claude_runner.start()
+        return redirect(url_for("queue_page", msg=None if ok else msg, info=msg if ok else None))
     if is_open_in_excel():
         return redirect(url_for("day", run_date=back,
                                 error="Applications.xlsx is open in Excel. Please close it and try again."))
@@ -214,6 +221,26 @@ def create():
 
     threading.Thread(target=work, daemon=True).start()
     return redirect(url_for("job", job_id=job_id))
+
+
+@app.route("/queue")
+def queue_page():
+    return render_template("queue.html", dates=db.run_dates(), error=request.args.get("msg"),
+                           info=request.args.get("info"))
+
+
+@app.route("/api/queue")
+def queue_status():
+    items = app_queue.items()
+    return jsonify({"running": claude_runner.is_running(), "items": items[::-1],
+                    "paused": any(it["status"] == app_queue.PAUSED for it in items)})
+
+
+@app.route("/queue/resume", methods=["POST"])
+def queue_resume():
+    app_queue.resume_paused()
+    ok, msg = claude_runner.start()
+    return redirect(url_for("queue_page", msg=None if ok else msg, info=msg if ok else None))
 
 
 @app.route("/job/<job_id>")

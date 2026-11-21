@@ -495,8 +495,10 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
     return notes, web
 
 
-def render(parts: Dict[str, str], warnings: List[str]) -> str:
-    """The .txt file: plain text, no Markdown, counts printed after each part."""
+def render(parts: Dict[str, str], warnings: List[str], body_words: Tuple[int, int] = None) -> str:
+    """The .txt file: plain text, no Markdown, counts printed after each part.
+    body_words: the (min, max) word range printed for the body (default: this module's limits)."""
+    lo, hi = body_words or (BODY_MIN_WORDS, BODY_MAX_WORDS)
     lines = [TOP_LINE, ""]
     if warnings:
         lines += [f"WARNING - {w}" for w in warnings] + [""]
@@ -505,7 +507,7 @@ def render(parts: Dict[str, str], warnings: List[str]) -> str:
               "2. LINKEDIN MESSAGE (after they accept, or as an InMail)", "",
               f"Subject: {parts['subject']}", f"({chars(parts['subject'])} of {SUBJECT_MAX_CHARS} characters)", "",
               parts["body"], "",
-              f"({words(parts['body'])} words, {BODY_MIN_WORDS}-{BODY_MAX_WORDS}; {chars(parts['body'])} of "
+              f"({words(parts['body'])} words, {lo}-{hi}; {chars(parts['body'])} of "
               f"{BODY_MAX_CHARS} characters)", "", "",
               "3. FOLLOW-UP MESSAGE (about a week later, if there's no reply)", "",
               parts["follow_up"], "",

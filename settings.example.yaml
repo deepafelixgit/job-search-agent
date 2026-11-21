@@ -49,6 +49,15 @@ budget_per_application: 1.75
 # posting). New bullets written from your evidence are added on top, up to this many (0 = none).
 new_meta_bullets: 0
 
+# Folder of Daily Tech Briefing JSON files (YYYY-MM-DD.json, schema_version 1), used for company facts.
+# Empty = skip.
+briefing_archive_dir: ""
+
+# How the web app's "Create custom resume and cover letter" button writes applications:
+#   claude_code - Claude Code on your Claude plan writes them (no API cost; the default)
+#   api         - the old path through the Claude API (costs money per application)
+generation_mode: claude_code
+
 # AI projects the cover letter may describe (true = mention it, false = leave it out).
 my_projects:
   job_search_agent: true   # the daily job search agent
@@ -76,11 +85,19 @@ pinned_bullets:
 # Personal word lists used when tailoring and writing (kept here, not in the code).
 personal:
   positioning:                   # how your work is positioned (examples guide depth only, never facts)
-    who_i_am: "Senior TPM at Example Company"
+    who_i_am: "I was a Senior TPM at Example Company"
     level: "a Senior TPM who led programs across Example Company's flagship products"
     stakes_examples: "a launch date protected, a release freeze averted, products people rely on"
     depth_example: "I led the release program behind Example Product, which people now use to ..."
     chain_example: '"my program" -> "what it made possible for the teams" -> "the launch" -> "who benefits"'
+    # --- used by the write-application skill (Claude Code)
+    products: "Product A, Product B"                     # named in the resume summary's second sentence
+    program_types: "release programs, platform programs"  # also in the summary's second sentence
+    ai_lead: "the AI or ML program to lead with when a posting values AI"
+    personal_ai_projects: "personal AI projects, mentioned only for AI product, agent or developer-tool roles"
+    safety_tie: "a fact from your background for safety or autonomy companies"
+    boundaries: "what you did NOT do, so it's never claimed"
+    benchmark_dir: "benchmarks/<company>"                # a reviewed example application (never copied)
   internal_terms: ["internal shorthand", "team nickname"]   # never written unless explained
   explain_terms: ["internal-label"]                         # allowed only with a short explanation
   translations:                                             # approved plain-language swaps

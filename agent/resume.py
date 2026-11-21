@@ -318,3 +318,34 @@ def write_cover_letter(template: Path, dst: Path, date_line: str, greeting: str,
     add(name, space_after=False)
     dst.parent.mkdir(parents=True, exist_ok=True)
     d.save(str(dst))
+
+
+def add_page_numbers(path: Path) -> None:
+    """Put the page number at the bottom right of every page (a PAGE field in each section's footer,
+    in the document's body font size). Any existing footer text is replaced."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    d = docx.Document(str(path))
+    for section in d.sections:
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        for r in list(p.runs):
+            r._r.getparent().remove(r._r)
+        for extra in footer.paragraphs[1:]:
+            extra._p.getparent().remove(extra._p)
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run = p.add_run()
+        for kind, text in (("begin", None), (None, "PAGE"), ("separate", None), (None, "1"), ("end", None)):
+            if kind:
+                el = OxmlElement("w:fldChar")
+                el.set(qn("w:fldCharType"), kind)
+            elif text == "PAGE":
+                el = OxmlElement("w:instrText")
+                el.set(qn("xml:space"), "preserve")
+                el.text = " PAGE "
+            else:
+                el = OxmlElement("w:t")
+                el.text = text
+            run._r.append(el)
+    d.save(str(path))

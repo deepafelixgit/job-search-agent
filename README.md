@@ -143,12 +143,48 @@ Then:
 | Test the job feeds without using Claude | `.venv/bin/python run_daily.py --dry-run` |
 | Run once now (fetch, filter, score) | `.venv/bin/python run_daily.py` |
 | Turn the 10 AM daily run on or off | `.venv/bin/python setup_schedule.py` or `.venv/bin/python setup_schedule.py --off` |
+| Write applications for the queued postings | `/write-application` in Claude Code, or the web app's button |
 | Run the offline tests (no API calls) | `.venv/bin/python -m unittest discover tests` and `.venv-mcp/bin/python -m unittest tests.test_impact_reader` |
 | Try the evidence tools without Claude | `.venv-mcp/bin/python -m mcp_server.cli search "release program"` |
 | Query the agent's results without Claude | `.venv-mcp/bin/python -m mcp_server.postings query --from 2026-11-01 --to 2026-11-30 --min 8` |
 
 To turn on the private-file safety checks, run `git config core.hooksPath .githooks`. Claude Code picks up
 the career-evidence server from `.mcp.json` when it's started in this folder.
+
+## Writing applications in Claude Code (no API cost)
+
+The agent finds and scores postings through the Claude API (about a cent per posting). The applications
+themselves (tailored resume, cover letter, recruiter message) are written by Claude Code on a Claude
+subscription plan, so they cost nothing in API charges. This is `generation_mode: claude_code` in
+`settings.yaml`, the default; `generation_mode: api` keeps the old API path.
+
+- **From the web app:** check postings and click "Create custom resume and cover letter". They go into a
+  queue (`data/queue.json`) and Claude Code runs in the background (`claude -p "/write-application"`), one
+  posting at a time. The "Applications being written" page shows each one as Queued, Writing, Ready or
+  Needs your review. If the plan's usage limit is reached, the rest are paused and a Resume button
+  continues them from their saved drafts.
+- **In Claude Code:** type `/write-application` (the queue), `/write-application <posting id>` or
+  `/write-application <posting link>` to watch it work and answer its questions.
+- **Billing safety:** Claude Code bills the API whenever an API key is in its environment, so the
+  background run starts with every API variable removed, and only after `claude auth status` reports a
+  plan login. The run may only read the project, search and fetch web pages, use subagents and the two
+  MCP servers, write inside `output/`, and run three no-API helper commands; it can't read `.env`.
+- **The skill** (`.claude/skills/write-application/`) holds the process: map the posting's top three
+  asks to the strongest evidence, gather company facts once (the Daily Tech Briefing archive in
+  `briefing_archive_dir`, then the company's newsroom and the news, then the posting), write the three
+  documents, have a fresh subagent review them against a rubric (R1 to R9), and render. Candidate
+  specifics live in `settings.yaml` (`personal.positioning`), never in the skill.
+- **The renderer** (`python -m agent.render_application <folder>`) builds the documents from the folder's
+  `content.json` with the agent's own Word code and formatting, adds page numbers, checks the code rules
+  (every Meta bullet kept, pinned bullets exact, numbers in verified_metrics.txt, experience before Meta
+  unchanged, the message's limits and courtesy phrases, wording rules), counts pages (cover letter 1,
+  resume at most 2; needs LibreOffice, otherwise reported as not counted) and adds the Applications.xlsx
+  row. `--resume-map` prints the base resume's parts with their IDs.
+- `python -m agent.company_facts "<company>"` prints the briefing archive's stories from the last 120 days
+  that name the company. `python -m agent.app_queue list` shows the queue.
+
+Each application folder also holds `content.json`, `notes.txt` (NEEDS YOUR REVIEW first, then the asks
+map, company facts, resume changes, rubric results and every claim's source), `sources.txt` and `drafts/`.
 
 ## What each output folder holds
 
@@ -183,6 +219,10 @@ If the recruiter message fails, the resume and cover letter are still kept and `
 | `agent/generate.py`, `agent/sheet.py` | Output folders, `changes.txt` and the application log |
 | `mcp_server/postings.py` | The job-postings MCP server: answers questions about the agent's results (read-only) and writes query results to a new tab in Applications.xlsx |
 | `mcp_server/` | The career-evidence MCP server: search, verified metrics, claim check (`candidate.py` reads your name and abbreviations from `settings.yaml`) |
+| `.claude/skills/write-application/` | The write-application skill: process, writing rules, rubric, content format |
+| `agent/render_application.py` | Builds an application's documents from `content.json` and runs the code checks (no API) |
+| `agent/app_queue.py`, `agent/claude_runner.py` | The application queue, and the background Claude Code run (billing-safe) |
+| `agent/company_facts.py` | Reads the Daily Tech Briefing archive for company facts (no API) |
 | `CLAUDE.md` | Rules Claude Code follows when working on resumes and letters in this project |
 
 ## Who built it

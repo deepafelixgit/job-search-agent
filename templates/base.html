@@ -77,6 +77,7 @@
       <button type="submit" id="runbtn" style="width:100%">Run now</button>
     </form>
     <div id="runmsg" class="sub" style="margin-top:8px"></div>
+    <a class="date" href="/queue" style="margin-top:10px"><span>Applications being written</span></a>
     <h2>Run dates</h2>
     {% for d in dates %}
       <a class="date {% if d.run_date == run_date %}active{% endif %}" href="/day/{{ d.run_date }}">

@@ -25,7 +25,12 @@ evidence/
 # Example cover letters (tone and structure references) - private
 style_examples/
 
+# Reviewed example applications (my own documents) - private
+benchmarks/
+
 # Personal documentation (not part of the code)
 Documentation- my folder/
 .venv-mcp/
-.claude/
+# Claude Code: local settings stay private; project skills are shared
+.claude/*
+!.claude/skills/
