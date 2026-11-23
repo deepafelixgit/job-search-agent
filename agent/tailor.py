@@ -245,6 +245,8 @@ def tailor_resume(model: str, resume_path: Path, post, out_path: Path,
     evidence (from evidence_gate.find_evidence) is required for the evidence gate:
     every Summary and Meta sentence is run through check_claim and removed if
     unsupported (pinned bullets excepted), and changes.txt cites a source for each."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     if evidence is None:
         raise ValueError("tailor_resume needs the posting's evidence (evidence_gate.find_evidence).")
     fixed = [b.strip() for b in fixed_bullets if b and b.strip()]

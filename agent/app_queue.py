@@ -7,6 +7,8 @@ through here under a file lock, so the two never overwrite each other.
                                                  (an interrupted one first, so drafts are continued)
   python -m agent.app_queue set <uid> <status> [note]
   python -m agent.app_queue add <uid> [<uid> ...]
+  python -m agent.app_queue rewrite <uid> <folder>   write a posting again in its existing folder; the old
+                                                     files move to <folder>/old_api_version/
   python -m agent.app_queue add-link <url> <company> <role title>   a posting that isn't in jobs.db
   python -m agent.app_queue list
 
@@ -57,9 +59,9 @@ def items() -> List[Dict]:
         return list(q["items"])
 
 
-def add(postings: List[Dict]) -> List[str]:
+def add(postings: List[Dict], folder: str = "") -> List[str]:
     """postings: [{uid, company, title, url}]. Ones already open in the queue aren't added twice;
-    finished ones are queued again (a new folder is made)."""
+    finished ones are queued again (a new folder is made, unless `folder` names the one to write in)."""
     added = []
     with _locked() as q:
         by_uid = {it["uid"]: it for it in q["items"]}
@@ -68,13 +70,34 @@ def add(postings: List[Dict]) -> List[str]:
             if it and it["status"] in OPEN:
                 continue
             new = {"uid": p["uid"], "company": p.get("company", ""), "title": p.get("title", ""),
-                   "url": p.get("url", ""), "status": QUEUED, "folder": "", "note": "", "updated": _now()}
+                   "url": p.get("url", ""), "status": QUEUED, "folder": folder, "note": "", "updated": _now()}
             if it:
                 q["items"][q["items"].index(it)] = new
             else:
                 q["items"].append(new)
             added.append(p["uid"])
     return added
+
+
+def rewrite(uid: str, folder: str) -> Dict:
+    """Queue a posting to be written again in its existing application folder. The folder's current files
+    (an application made the old way) move into <folder>/old_api_version/ first, so they're kept."""
+    import shutil
+    from . import db
+    path = Path(folder).resolve()
+    rows = db.get_postings([uid])
+    if not rows or not path.is_dir():
+        raise SystemExit(f"Unknown posting {uid} or folder {path}")
+    old = path / "old_api_version"
+    old.mkdir(exist_ok=True)
+    moved = []
+    for f in path.iterdir():
+        if f.name != "old_api_version":
+            shutil.move(str(f), str(old / f.name))
+            moved.append(f.name)
+    r = rows[0]
+    added = add([{"uid": uid, "company": r["company"], "title": r["title"], "url": r["url"]}], folder=str(path))
+    return {"uid": uid, "folder": str(path), "moved_to_old_api_version": moved, "queued": bool(added)}
 
 
 def set_status(uid: str, status: str, note: str = "", folder: str = None) -> None:
@@ -131,7 +154,8 @@ def take_next() -> Optional[Dict]:
             it["folder"] = str(folder)
         it["status"], it["updated"] = WRITING, _now()
         background = os.environ.get("JOB_AGENT_BACKGROUND") == "1"
-        drafts = [f.name for f in Path(it["folder"]).iterdir() if f.name != "render_report.json"]
+        drafts = [f.name for f in Path(it["folder"]).iterdir()
+                  if f.name not in ("render_report.json", "old_api_version")]
         return {"uid": it["uid"], "folder": it["folder"], "continuing": bool(drafts), "drafts": sorted(drafts),
                 "company": post.get("company") or it["company"], "title": post.get("title") or it["title"],
                 "url": post.get("url") or it["url"], "score": post.get("score"), "posted": post.get("posted"),
@@ -152,6 +176,8 @@ def main(argv: List[str]) -> int:
         uid = "link:" + hashlib.sha1(url.encode()).hexdigest()[:12]
         added = add([{"uid": uid, "company": argv[2], "title": " ".join(argv[3:]), "url": url}])
         print(json.dumps({"uid": uid, "queued": bool(added)}))
+    elif cmd == "rewrite" and len(argv) == 3:
+        print(json.dumps(rewrite(argv[1], argv[2])))
     elif cmd == "add" and len(argv) >= 2:
         from . import db
         rows = {r["uid"]: r for r in db.get_postings(argv[1:])}

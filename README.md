@@ -182,6 +182,14 @@ subscription plan, so they cost nothing in API charges. This is `generation_mode
   row. `--resume-map` prints the base resume's parts with their IDs.
 - `python -m agent.company_facts "<company>"` prints the briefing archive's stories from the last 120 days
   that name the company. `python -m agent.app_queue list` shows the queue.
+- **No API writing by mistake:** in `claude_code` mode, the API writing steps (evidence search, resume
+  tailoring, cover letter, recruiter message, claim check, coverage report) refuse to run. Every Create
+  button (the daily list and the "Score a posting" result) goes to the queue. Scoring stays on the API.
+- **Always the latest code:** a running app keeps the code it started with. The app notices when its code
+  has changed, shows a banner and switches off Create, Run now and Score until it's restarted; "Start Job
+  Agent" stops an already-running copy before starting.
+- `python -m agent.app_queue rewrite <uid> <folder>` writes an application again in its folder, moving the
+  old files to `old_api_version/`.
 
 Each application folder also holds `content.json`, `notes.txt` (NEEDS YOUR REVIEW first, then the asks
 map, company facts, resume changes, rubric results and every claim's source), `sources.txt` and `drafts/`.

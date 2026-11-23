@@ -519,6 +519,8 @@ def write_letter(model: str, resume_path: Path, post, out_path: Path, name: str,
                  precheck_model: str = "", check_model: str = "") -> Tuple[List[dict], List[str]]:
     """Plan -> draft -> critique against the senior-letter standard -> revise -> claim check (last, in code).
     Returns (news items, lines for changes.txt)."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     precheck_model = precheck_model or model
     with step("News search (for the cover letter)"):
         news = find_news(precheck_model, post["company"], post["title"], today)

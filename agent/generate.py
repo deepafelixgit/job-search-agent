@@ -54,6 +54,8 @@ def _safe(s: str) -> str:
 
 def generate(uids: List[str], progress: Callable[[str, str], None], evidence_override: dict = None) -> dict:
     """progress(uid, message) is called as each step finishes."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     settings = load_settings()
     model = settings["models"]["writing"]
     check_model = settings["models"].get("checking") or model     # resume fact-check and final claim checks
@@ -210,6 +212,8 @@ def generate_resume_only(uids: List[str], progress: Callable[[str, str], None], 
                          resume_source: Path = None) -> dict:
     """Tailor only the resume (no cover letter, no news search, no tracker row): cheaper, for
     when only the resume needs regenerating. Writes the resume and changes.txt."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     settings = load_settings()
     model = settings["models"]["writing"]
     name_us = settings["candidate"]["name"].replace(" ", "_")

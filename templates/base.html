@@ -87,7 +87,9 @@
       <div class="sub" style="padding:0 6px">No runs yet.</div>
     {% endfor %}
   </aside>
-  <main>{% block main %}{% endblock %}</main>
+  <main>{% if code_stale %}<div class="notice err" style="margin-bottom:12px"><b>The app is running older code.</b>
+    Close this window and the Terminal window, then double-click Start Job Agent again. Until then, Create, Run now
+    and Score are switched off.</div>{% endif %}{% block main %}{% endblock %}</main>
 </div>
 <script>
   // Show "Running…" while a fetch-and-score run is in progress; refresh when it finishes.

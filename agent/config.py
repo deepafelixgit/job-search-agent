@@ -41,3 +41,20 @@ def tailoring_guidance(settings: dict) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"tailoring_guidance_file in settings.yaml points to {name}, which doesn't exist.")
     return path.read_text(encoding="utf-8").strip()
+
+
+class APIWritingDisabled(RuntimeError):
+    """Raised when an API writing step is called while generation_mode is claude_code."""
+
+
+def ensure_api_writing_allowed(settings: dict = None) -> None:
+    """Applications are written by Claude Code on the Claude plan (generation_mode: claude_code, the
+    default). Then the API writing steps (evidence search, resume tailoring, cover letter, recruiter
+    message, claim check, coverage report) refuse to run, so writing an application never costs API
+    money. Scoring is not affected."""
+    mode = ((settings if settings is not None else load_settings()).get("generation_mode") or "claude_code")
+    if mode != "api":
+        raise APIWritingDisabled(
+            "Applications are written by Claude Code on your Claude plan (generation_mode: claude_code), so the "
+            "API writing step was not run. Use the Create button or /write-application. To use the old API path, "
+            "set generation_mode: api in settings.yaml.")

@@ -9,6 +9,7 @@ import warnings
 warnings.filterwarnings("ignore", message=".*OpenSSL.*")
 
 import datetime as dt  # noqa: E402
+import hashlib  # noqa: E402
 import secrets  # noqa: E402
 import subprocess  # noqa: E402
 import threading  # noqa: E402
@@ -29,6 +30,30 @@ CSRF_TOKEN = secrets.token_urlsafe(32)   # stops other websites from pressing bu
 JOBS: dict = {}                          # background "create resume" jobs, by id
 RUN_STATE = {"running": False, "last": None}
 
+# A running app keeps the code it started with. If the code changes afterwards, this copy would keep
+# using the old code (that's how applications went through the old API path). So the app notes its code
+# at startup, shows a banner when the code has changed, and refuses to create or run anything until it's
+# restarted.
+APP_DIR = Path(__file__).resolve().parent
+BLOCKED_WHEN_STALE = {"create", "run_now", "retry_failed", "queue_resume", "score_posting", "rescore"}
+
+
+def code_fingerprint() -> str:
+    files = [APP_DIR / "app.py", *sorted((APP_DIR / "agent").glob("*.py")),
+             *sorted((APP_DIR / "templates").glob("*.html")), APP_DIR / "run_daily.py"]
+    h = hashlib.sha256()
+    for f in files:
+        if f.exists():
+            h.update(f"{f.name}:{f.stat().st_mtime_ns}:{f.stat().st_size};".encode())
+    return h.hexdigest()
+
+
+STARTUP_CODE = code_fingerprint()
+
+
+def code_is_stale() -> bool:
+    return code_fingerprint() != STARTUP_CODE
+
 
 @app.before_request
 def local_only():
@@ -36,11 +61,13 @@ def local_only():
         abort(403)
     if request.method == "POST" and request.form.get("csrf") != CSRF_TOKEN:
         abort(403)
+    if request.endpoint in BLOCKED_WHEN_STALE and code_is_stale():
+        return (render_template("stale.html", dates=db.run_dates()), 409)
 
 
 @app.context_processor
 def inject():
-    return {"csrf": CSRF_TOKEN, "run_state": RUN_STATE}
+    return {"csrf": CSRF_TOKEN, "run_state": RUN_STATE, "code_stale": code_is_stale()}
 
 
 # ------------------------------------------------------------------ pages

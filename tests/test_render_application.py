@@ -197,6 +197,18 @@ class Queue(unittest.TestCase):
         st = {i["uid"]: i["status"] for i in app_queue.items()}
         self.assertEqual(st, {"A|1": app_queue.WRITING, "B|2": app_queue.QUEUED})   # A continues its drafts
 
+    def test_rewrite_keeps_the_old_files_and_reuses_the_folder(self):
+        folder = Path(self.tmp.name) / "Acme_TPM"
+        folder.mkdir()
+        (folder / "old_resume.docx").write_text("x")
+        row = {"uid": "Acme|1", "company": "Acme", "title": "TPM", "url": "u"}
+        with mock.patch("agent.db.get_postings", lambda uids: [row]):
+            res = app_queue.rewrite("Acme|1", str(folder))
+        self.assertEqual(res["moved_to_old_api_version"], ["old_resume.docx"])
+        self.assertTrue((folder / "old_api_version" / "old_resume.docx").exists())
+        item = app_queue.items()[0]
+        self.assertEqual((item["status"], item["folder"]), (app_queue.QUEUED, str(folder.resolve())))
+
     def test_usage_limit_pauses_and_other_failures_need_review(self):
         app_queue.add([{"uid": "A|1"}, {"uid": "B|2"}])
         app_queue.set_status("A|1", app_queue.WRITING)

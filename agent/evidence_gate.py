@@ -378,6 +378,8 @@ def filter_evidence(model: str, cands: List[Tuple[str, dict]]) -> Tuple[List[Tup
 
 
 def find_evidence(model: str, post, filter_model: str = "") -> PostingEvidence:
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     base = run_batch({"metrics": True, "impact": True})
     rules = rules_from(base["metrics"])
     impact = (base.get("impact") or {}).get("lines") or {}
@@ -650,6 +652,8 @@ def judge_sentences(model: str, items: List[Tuple[str, bool]], ev: "PostingEvide
     lines; no phrases to avoid; no unexplained internal terms; no title missing from the
     resume). Claude judges meaning: is it a fact or a perspective, and does the evidence
     state the same facts (different words allowed, nothing added)?"""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     if not items:
         return []
     sents = [s for s, _ in items]
@@ -786,6 +790,8 @@ COVERAGE_SCHEMA = {
 def coverage_report(model: str, ev: PostingEvidence, resume_doc: str, letter_doc: str) -> Dict[str, List[str]]:
     """changes.txt sections: the posting's top 3 responsibilities and the evidence each document uses (or
     NO EVIDENCE FOUND), plus RELEVANT BUT UNUSED evidence for the resume and the letter."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     items: Dict[str, Tuple[str, str]] = {}
     for p in ev.passages:              # verified-metrics lines are listed once, below, as V<line>
         if p.get("doc_type") != "verified metrics":

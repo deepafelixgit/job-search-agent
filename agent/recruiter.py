@@ -366,6 +366,8 @@ def write_message(model: str, check_model: str, post, ev: PostingEvidence, news:
                   letter_text: str, projects: Dict[str, str], name: str, today: dt.date, out_path: Path,
                   contact: str = "", final_model: str = "") -> Tuple[List[str], List[dict]]:
     """Write the recruiter message file. Returns (changes.txt lines, web items used for sources.txt)."""
+    from .config import ensure_api_writing_allowed
+    ensure_api_writing_allowed()   # no API writing in claude_code mode
     title = post["title"].strip()
     url = post["url"] or ""
     news_block = json.dumps(news, indent=1, ensure_ascii=False) if news else "(No verified news.)"
