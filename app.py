@@ -182,7 +182,8 @@ def run_now():
 def retry_failed():
     """Read again only the companies whose fetch failed in one run."""
     run_id = int(request.form.get("run_id", "0") or 0)
-    names = [r["company"] for r in db.failures_for([run_id]).get(run_id, []) if not r["retried_by"]]
+    names = [r["company"] for r in db.failures_for([run_id]).get(run_id, [])
+             if not r["retried_by"] and r["kind"] != "partial"]     # partial ones continue on the next run
     if names and not RUN_STATE["running"] and not _run_lock_held():
         RUN_STATE["running"] = True
         threading.Thread(target=_run_in_background, daemon=True,

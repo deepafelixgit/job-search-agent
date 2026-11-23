@@ -36,6 +36,73 @@ PAUSE = 0.5          # seconds between detail requests, to be polite
 
 _local = threading.local()        # per-company pause (companies are read in parallel)
 
+MAX_DAILY_PAGES = 15        # newest-first read: if it hasn't reached known jobs by then, a full sweep is due
+SWEEP_WEEKDAY = 6           # Sunday: weekly full sweep (safety net for the newest-first stop rule)
+SWEEP_EVERY_DAYS = 8        # ...or whenever the last full sweep is older than this (e.g. a missed Sunday)
+COVERED_MARGIN_DAYS = 3     # newest-first: jobs posted this long before the last complete read count as covered
+
+
+class ReadResult(list):
+    """The postings a reader returned, plus what happened. A plain list for callers that don't care.
+    error: why reading stopped early ("" if it finished). stopped_at: where (query and page).
+    search_ids: every job ID the search pages returned (any title). state: the company's reader
+    state to save (Eightfold), or None."""
+    def __init__(self, items=(), error="", stopped_at="", search_ids=(), state=None, mode=""):
+        super().__init__(items)
+        self.error, self.stopped_at, self.mode = error, stopped_at, mode
+        self.search_ids, self.state = set(search_ids), state
+
+    @property
+    def partial(self) -> bool:
+        return bool(self.error)
+
+
+def _collected() -> Dict[str, Posting]:
+    """The postings dict a reader fills; run_reader keeps it if the reader stops partway."""
+    if getattr(_local, "collected", None) is None:
+        _local.collected = {}
+    return _local.collected
+
+
+def _note(**kw) -> None:
+    """Readers record progress here (where they are, job IDs seen, state to save)."""
+    if getattr(_local, "report", None) is None:
+        _local.report = {}
+    _local.report.update(kw)
+
+
+_filter_cache = {}
+
+
+def _the_filter():
+    """The same Filter the daily run uses (settings.yaml), built once."""
+    if "f" not in _filter_cache:
+        from .config import load_settings
+        from .filters import Filter
+        _filter_cache["f"] = Filter(load_settings())
+    return _filter_cache["f"]
+
+
+UNCLEAR_LOCATION = re.compile(r"multiple|remote|various|anywhere|location", re.I)
+
+
+def location_unclear(locations) -> bool:
+    """Missing, shortened (no comma, e.g. "Redmond" or "2 Locations"), "Multiple locations" or
+    remote: the search result doesn't tell us enough, so the details must be read."""
+    locs = [l for l in (locations or []) if (l or "").strip()]
+    return not locs or any(UNCLEAR_LOCATION.search(l) or "," not in l for l in locs)
+
+
+def passes_precheck(title: str, locations, f=None) -> bool:
+    """Before asking for a job's details: would the full filter keep it? Uses the filter's own title,
+    excluded-word and location rules. The pay/seniority rule needs the description, so it isn't
+    applied here, and an unclear location always passes. So this never drops a job the full
+    filter would keep."""
+    f = f or _the_filter()
+    if not f.title_re.search(title or "") or f.exclude_re.search(title or ""):
+        return False
+    return location_unclear(locations) or f.any_location_ok(list(locations or []))
+
 
 def _request(method: str, url: str, *, params=None, json_body=None, html=False):
     time.sleep(getattr(_local, "pause", PAUSE))     # never hit a site in rapid bursts
@@ -94,7 +161,7 @@ def _workday_list_date(text: str) -> Optional[str]:
 def fetch_workday(company: dict, known=frozenset(), older_than=None) -> List[Posting]:
     host, tenant, site = company["host"], company["tenant"], company["site"]
     base = f"https://{host}/wday/cxs/{tenant}/{site}"
-    out: Dict[str, Posting] = {}
+    out: Dict[str, Posting] = _collected()
     for query in WORKDAY_QUERIES:
         empty_pages, total = 0, 0
         for page in range(25):                         # at most 500 results per search
@@ -138,61 +205,144 @@ def fetch_workday(company: dict, known=frozenset(), older_than=None) -> List[Pos
 # ------------------------------------------------------------------ Eightfold
 # settings: board: eightfold, url: https://explore.jobs.netflix.net, domain: netflix.com, api: v2 | pcsx
 
+def _sweep_needed(state: dict, today: dt.date) -> bool:
+    if state.get("sweep_due") or state.get("resume_query") is not None or not state.get("last_sweep"):
+        return True
+    last = dt.date.fromisoformat(state["last_sweep"])
+    return (today.weekday() == SWEEP_WEEKDAY and (today - last).days >= 3) or (today - last).days >= SWEEP_EVERY_DAYS
+
+
 def fetch_eightfold(company: dict, known=frozenset(), older_than=None) -> List[Posting]:
+    """Eightfold career sites (Microsoft, Netflix, PayPal, Qualcomm, NetApp).
+
+    Optional settings (pcsx sites only; tested on Microsoft):
+      location: "United States"  - the site filters the search to that place (fewer pages)
+      newest_first: true         - daily read sorted newest first, stopping at jobs already looked at;
+                                   a full sweep runs weekly (Sunday), after a partial read, and until a
+                                   first sweep has completed. A full sweep that stops partway resumes
+                                   from that query and page on the next run.
+      full_sweep: false          - for a site that allows very few requests: never run full sweeps, only
+                                   the newest-first read (jobs older than the last complete read, or than
+                                   a week on the first read, count as already covered)
+      max_pages: 5               - at most this many pages in the newest-first read (default 15)
+    """
+    from . import db
     base, domain = company["url"].rstrip("/"), company["domain"]
     pcsx = company.get("api") == "pcsx"
-    out: Dict[str, Posting] = {}
-    for query in QUERIES:
-        empty_pages, total = 0, 0
-        for page in range(40):
+    out = _collected()
+    today = dt.date.today()
+    newest_first = bool(pcsx and company.get("newest_first"))
+    state = db.reader_state(company["name"]) if newest_first else {}
+    found_ids: set = set()
+    _note(search_ids=found_ids)
+
+    def search(query: str, page: int, newest: bool):
+        if pcsx:
+            params = {"domain": domain, "query": query, "start": page * 10}
+            if company.get("location"):
+                params["location"] = company["location"]
+            if newest:
+                params["sort_by"] = "timestamp"
+            data = _request("GET", f"{base}/api/pcsx/search", params=params).get("data") or {}
+        else:
+            data = _request("GET", f"{base}/api/apply/v2/jobs",
+                            params={"domain": domain, "query": query, "start": page * 10, "num": 10})
+        items = data.get("positions") or []
+        found_ids.update(str(j.get("id")) for j in items)
+        return items, int(data.get("count") or 0)
+
+    def take(j) -> bool:
+        """Add one search result; True if its title looks like a program-manager role."""
+        title = (j.get("name") or "").strip()
+        if not TITLE_HINT.search(title):
+            return False
+        sid = str(j.get("id"))
+        uid = f"{company['name']}|{sid}"
+        if uid in out:
+            return True
+        if pcsx:
+            posted, reliable = _epoch_date(j.get("postedTs")), bool(j.get("postedTs"))
+        else:   # v2 has only created/updated times; the later one is the closer stand-in
+            posted, reliable = _epoch_date(max(j.get("t_create") or 0, j.get("t_update") or 0) or None), False
+        url = j.get("canonicalPositionUrl") or (base + j.get("positionUrl", f"/careers/job/{sid}"))
+        p = Posting(company=company["name"], source_id=sid, title=title,
+                    locations=list(j.get("locations") or [j.get("location", "")]), url=url,
+                    description="", posted=posted, posted_reliable=reliable)
+        # details only for jobs the full filter could keep (it then rejects the rest by title/location)
+        if _want_details(title, uid, posted, known, older_than) and passes_precheck(title, p.locations):
             if pcsx:
-                data = (_request("GET", f"{base}/api/pcsx/search",
-                                 params={"domain": domain, "query": query, "start": page * 10}).get("data") or {})
+                d = _request("GET", f"{base}/api/pcsx/position_details",
+                             params={"position_id": sid, "domain": domain, "hl": "en"}).get("data") or {}
+                desc = html_to_text(d.get("jobDescription", ""))
+                p.url = d.get("publicUrl") or p.url
             else:
-                data = _request("GET", f"{base}/api/apply/v2/jobs",
-                                params={"domain": domain, "query": query, "start": page * 10, "num": 10})
-            items = data.get("positions") or []
+                d = _request("GET", f"{base}/api/apply/v2/jobs/{sid}", params={"domain": domain})
+                desc = html_to_text(d.get("job_description", ""))
+                # The real posting date is on the job's own page ("datePosted")
+                job_page = _request("GET", url, html=True)
+                m = re.search(r'"datePosted"\s*:\s*"([^"]+)"', job_page)
+                if m and iso_date(m.group(1)):
+                    p.posted, p.posted_reliable = iso_date(m.group(1)), True
+            p.description, p.pay_top = desc, top_of_pay_range(desc)
+            p.locations = list(d.get("locations") or p.locations)
+        out[uid] = p
+        return True
+
+    allow_sweep = company.get("full_sweep", True) is not False
+    if newest_first and (not allow_sweep or not _sweep_needed(state, today)):
+        # ---- daily read: newest first, one query, stop at the first page of jobs already covered
+        seen = db.search_ids(company["name"])
+        last = state.get("last_complete") or state.get("last_sweep")
+        if last:
+            covered_before = dt.date.fromisoformat(last) - dt.timedelta(days=COVERED_MARGIN_DAYS)
+        else:   # never read completely: without sweeps, a week back is the limit
+            covered_before = None if allow_sweep else today - dt.timedelta(days=7)
+        query = company.get("daily_query", "program manager")
+        # until this read finishes, a partial read means "sweep next" (if sweeps are allowed)
+        new_state = dict(state, sweep_due=allow_sweep)
+        if not allow_sweep:
+            new_state.update(resume_query=None, resume_page=None)
+        _note(mode="newest first", state=new_state)
+        for page in range(int(company.get("max_pages") or MAX_DAILY_PAGES)):
+            _note(stopped_at=f'newest-first read, query "{query}", page {page + 1}')
+            items, _ = search(query, page, newest=True)
             if not items:
                 break
-            hits = 0
             for j in items:
-                title = (j.get("name") or "").strip()
-                if not TITLE_HINT.search(title):
-                    continue
-                hits += 1
-                sid = str(j.get("id"))
-                uid = f"{company['name']}|{sid}"
-                if uid in out:
-                    continue
-                if pcsx:
-                    posted, reliable = _epoch_date(j.get("postedTs")), bool(j.get("postedTs"))
-                else:   # v2 has only created/updated times; the later one is the closer stand-in
-                    posted, reliable = _epoch_date(max(j.get("t_create") or 0, j.get("t_update") or 0) or None), False
-                url = j.get("canonicalPositionUrl") or (base + j.get("positionUrl", f"/careers/job/{sid}"))
-                p = Posting(company=company["name"], source_id=sid, title=title,
-                            locations=list(j.get("locations") or [j.get("location", "")]), url=url,
-                            description="", posted=posted, posted_reliable=reliable)
-                if _want_details(title, uid, posted, known, older_than):
-                    if pcsx:
-                        d = _request("GET", f"{base}/api/pcsx/position_details",
-                                     params={"position_id": sid, "domain": domain, "hl": "en"}).get("data") or {}
-                        desc = html_to_text(d.get("jobDescription", ""))
-                        p.url = d.get("publicUrl") or p.url
-                    else:
-                        d = _request("GET", f"{base}/api/apply/v2/jobs/{sid}", params={"domain": domain})
-                        desc = html_to_text(d.get("job_description", ""))
-                        # The real posting date is on the job's own page ("datePosted")
-                        job_page = _request("GET", url, html=True)
-                        m = re.search(r'"datePosted"\s*:\s*"([^"]+)"', job_page)
-                        if m and iso_date(m.group(1)):
-                            p.posted, p.posted_reliable = iso_date(m.group(1)), True
-                    p.description, p.pay_top = desc, top_of_pay_range(desc)
-                    p.locations = list(d.get("locations") or p.locations)
-                out[uid] = p
+                take(j)
+            def covered(j) -> bool:
+                posted = _epoch_date(j.get("postedTs"))
+                return str(j.get("id")) in seen or bool(covered_before and posted and posted < covered_before.isoformat())
+            if all(covered(j) for j in items):
+                break
+        else:
+            if allow_sweep:
+                return list(out.values())             # never reached known jobs: sweep_due stays set
+            _note(mode="newest first (stopped at the page limit)")
+        new_state.update(sweep_due=False, last_complete=today.isoformat())
+        return list(out.values())
+
+    # ---- full sweep (and every non-newest-first site): all queries, relevance order
+    start_q = state.get("resume_query") or 0
+    start_page = state.get("resume_page") or 0
+    new_state = dict(state)
+    _note(mode="full sweep" if newest_first else "", state=new_state if newest_first else None)
+    for qi in range(start_q, len(QUERIES)):
+        query = QUERIES[qi]
+        empty_pages, total = 0, 0
+        for page in range(start_page if qi == start_q else 0, 40):
+            new_state.update(resume_query=qi, resume_page=page, sweep_due=True)
+            _note(stopped_at=f'query "{query}", page {page + 1}')
+            items, count = search(query, page, newest=False)
+            if not items:
+                break
+            hits = sum(take(j) for j in items)
             empty_pages = 0 if hits else empty_pages + 1
-            total = total or int(data.get("count") or 0)
+            total = total or count
             if empty_pages >= 3 or (total and (page + 1) * 10 >= total):
                 break
+    new_state.update(resume_query=None, resume_page=None, sweep_due=False,
+                     last_sweep=today.isoformat(), last_complete=today.isoformat())
     return list(out.values())
 
 
@@ -202,7 +352,7 @@ def fetch_eightfold(company: dict, known=frozenset(), older_than=None) -> List[P
 def fetch_oracle(company: dict, known=frozenset(), older_than=None) -> List[Posting]:
     host, site = company["host"].rstrip("/"), company["site"]
     api = f"{host}/hcmRestApi/resources/latest"
-    out: Dict[str, Posting] = {}
+    out: Dict[str, Posting] = _collected()
     for query in QUERIES:
         for page in range(12):
             finder = (f"findReqs;siteNumber={site},keyword={query},limit=25,offset={page * 25},"
@@ -333,7 +483,7 @@ def _apple_location(loc: dict) -> str:
 
 
 def fetch_apple(company: dict, known=frozenset(), older_than=None) -> List[Posting]:
-    out: Dict[str, Posting] = {}
+    out: Dict[str, Posting] = _collected()
     for query in QUERIES:
         for page in range(1, 16):                       # newest first, 20 per page
             loader = _apple_data(_request("GET", "https://jobs.apple.com/en-us/search", html=True, params={
@@ -384,7 +534,7 @@ def fetch_google(company: dict, known=frozenset(), older_than=None) -> List[Post
       only_company: DeepMind          -> search only that Alphabet company's jobs on Google's site
       skip_companies: [DeepMind]      -> leave out jobs listed under its own company entry
     """
-    out: Dict[str, Posting] = {}
+    out: Dict[str, Posting] = _collected()
     only = company.get("only_company")
     skip = {c.lower() for c in company.get("skip_companies") or []}
     for query in QUERIES:
@@ -438,8 +588,20 @@ SITE_READERS: Dict[str, Callable] = {
 }
 
 
-def run_reader(company: dict, known=frozenset(), older_than=None) -> List[Posting]:
+def run_reader(company: dict, known=frozenset(), older_than=None) -> ReadResult:
     """Entry point used by fetchers.fetch_company. settings may set 'pause' (seconds
-    between requests) for sites that are strict about request speed."""
+    between requests) for sites that are strict about request speed.
+
+    If the reader stops partway (a refusal, a network error, an unexpected answer), the postings
+    read so far are returned with .error set, so the daily run keeps and scores them."""
     _local.pause = float(company.get("pause", PAUSE))
-    return SITE_READERS[company["board"]](company, known, older_than)
+    _local.collected = {}
+    _local.report = {}
+    try:
+        found = SITE_READERS[company["board"]](company, known, older_than)
+        error = ""
+    except Exception as e:  # noqa: BLE001 - reported as "partial" (or as a failure if nothing was read)
+        found, error = list(_local.collected.values()), str(e)
+    rep = _local.report
+    return ReadResult(found, error=error, stopped_at=rep.get("stopped_at", "") if error else "",
+                      search_ids=rep.get("search_ids") or (), state=rep.get("state"), mode=rep.get("mode", ""))

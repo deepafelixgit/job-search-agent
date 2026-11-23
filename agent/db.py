@@ -8,6 +8,10 @@ Tables:
               kind = 'filtered' (failed a rule) or 'old' (posted too long ago)
   companies_checked - companies the agent has already read at least once
   runs      - one row per run (date, counts, status message)
+  search_ids - every job ID a search page returned (any title), so newest-first readers can
+              stop paging once they reach jobs already looked at
+  reader_state - per company: full-sweep progress (where to resume), whether a sweep is due,
+              and the dates of the last full sweep and the last complete read
   pending_sheet_rows - spreadsheet rows waiting because Excel had the file open
 """
 from __future__ import annotations
@@ -45,12 +49,20 @@ CREATE TABLE IF NOT EXISTS companies_checked (
 CREATE TABLE IF NOT EXISTS run_failures (
     run_id INTEGER, company TEXT, error TEXT, retried_by INTEGER
 );
+CREATE TABLE IF NOT EXISTS search_ids (
+    uid TEXT PRIMARY KEY, first_seen TEXT
+);
+CREATE TABLE IF NOT EXISTS reader_state (
+    company TEXT PRIMARY KEY, sweep_due INTEGER, resume_query INTEGER, resume_page INTEGER,
+    last_sweep TEXT, last_complete TEXT
+);
 """
 
 # Columns added after the first version; older databases get them automatically.
 NEW_COLUMNS = [("postings", "posted", "TEXT"), ("pending_sheet_rows", "url", "TEXT"),
                ("postings", "source", "TEXT"),
-               ("pending_sheet_rows", "score", "INTEGER"), ("pending_sheet_rows", "days", "INTEGER")]       # source: "manual" = added with "Score a posting"
+               ("pending_sheet_rows", "score", "INTEGER"), ("pending_sheet_rows", "days", "INTEGER"),
+               ("run_failures", "kind", "TEXT")]   # kind: "failed" (nothing read) or "partial"       # source: "manual" = added with "Score a posting"
 
 
 @contextmanager
@@ -136,11 +148,41 @@ def mark_company_checked(company: str, run_date: str) -> None:
         c.execute("INSERT OR IGNORE INTO companies_checked VALUES (?,?)", (company.strip().lower(), run_date))
 
 
-def add_run_failures(run_id: int, failures: List[tuple]) -> None:
-    """failures: [(company name, error text)] for companies whose fetch failed in this run."""
+def add_run_failures(run_id: int, failures: List[tuple], kind: str = "failed") -> None:
+    """failures: [(company name, error text)] for companies whose fetch failed in this run.
+    kind "partial": the company stopped partway; what was read is kept, the rest is read next run."""
     with connect() as c:
-        c.executemany("INSERT INTO run_failures (run_id, company, error) VALUES (?,?,?)",
-                      [(run_id, name, err[:500]) for name, err in failures])
+        c.executemany("INSERT INTO run_failures (run_id, company, error, kind) VALUES (?,?,?,?)",
+                      [(run_id, name, err[:500], kind) for name, err in failures])
+
+
+def search_ids(company: str) -> set:
+    """Source IDs of every job a search page has returned for this company."""
+    prefix = f"{company}|"
+    with connect() as c:
+        return {r["uid"][len(prefix):] for r in
+                c.execute("SELECT uid FROM search_ids WHERE uid LIKE ? ESCAPE '\\'",
+                          (prefix.replace("%", "\\%").replace("_", "\\_") + "%",))}
+
+
+def add_search_ids(uids: List[str], run_date: str) -> None:
+    with connect() as c:
+        c.executemany("INSERT OR IGNORE INTO search_ids VALUES (?,?)", [(u, run_date) for u in uids])
+
+
+def reader_state(company: str) -> dict:
+    """{'sweep_due', 'resume_query', 'resume_page', 'last_sweep', 'last_complete'} (empty values if new)."""
+    with connect() as c:
+        r = c.execute("SELECT * FROM reader_state WHERE company=?", (company,)).fetchone()
+    keys = ("sweep_due", "resume_query", "resume_page", "last_sweep", "last_complete")
+    return {k: (r[k] if r else None) for k in keys}
+
+
+def save_reader_state(company: str, state: dict) -> None:
+    with connect() as c:
+        c.execute("INSERT OR REPLACE INTO reader_state VALUES (?,?,?,?,?,?)",
+                  (company, int(bool(state.get("sweep_due"))), state.get("resume_query"),
+                   state.get("resume_page"), state.get("last_sweep"), state.get("last_complete")))
 
 
 def failures_for(run_ids: List[int]) -> dict:

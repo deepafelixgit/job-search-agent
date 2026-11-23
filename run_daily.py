@@ -26,7 +26,7 @@ import sys  # noqa: E402
 import traceback  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: E402
 
-from agent import db  # noqa: E402
+from agent import db, http  # noqa: E402
 from agent.config import DATA_DIR, LOG_DIR, load_settings, resume_path  # noqa: E402
 from agent.fetchers import fetch_company  # noqa: E402
 from agent.filters import apply_filters  # noqa: E402
@@ -45,6 +45,8 @@ def run(trigger: str = "manual", dry_run: bool = False, only: list = None, retry
     """only: company names to read (e.g. the failed companies of an earlier run); default all.
     retry_of: the run whose failed companies this run retries (recorded on that run)."""
     settings = load_settings()
+    for host in settings.get("log_requests_for") or []:     # request log, for diagnosing a site's limits
+        http.log_requests(str(host), str(LOG_DIR / "requests.log"))
     lock = open(DATA_DIR / "run.lock", "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -67,6 +69,10 @@ def run(trigger: str = "manual", dry_run: bool = False, only: list = None, retry
             companies = [c for c in companies if c.get("name", "").strip().lower() in wanted]
             log(f"Retrying {len(companies)} companies: " + ", ".join(c["name"] for c in companies))
         seen = frozenset(db.seen_uids())
+        paused = [c for c in companies if str(c.get("paused_until") or "") > today]
+        for c in paused:       # e.g. a site that refused too many requests: give its limit time to reset
+            log(f"{c['name']}: paused until {c['paused_until']} (paused_until in settings.yaml) - not read")
+        companies = [c for c in companies if c not in paused]
 
         def _fetch(company):
             first = company.get("name", "").strip().lower() not in already_checked
@@ -75,24 +81,40 @@ def run(trigger: str = "manual", dry_run: bool = False, only: list = None, retry
             except Exception as e:
                 return None, e
 
-        failed = []                                         # (company, error) for this run
+        failed, partial = [], []                            # (company, error) for this run
+        reader_saves = []                                   # (company, reader state, search IDs) to save
         with ThreadPoolExecutor(max_workers=6) as pool:     # read 6 job boards at a time (see agent/http.py)
             fetched_lists = list(pool.map(_fetch, companies))
         for company, (found, err) in zip(companies, fetched_lists):
+            name = company.get("name")
             try:
                 if err:
                     raise err
+                stopped = getattr(found, "error", "")
+                ids = getattr(found, "search_ids", set())
+                reader_saves.append((name, getattr(found, "state", None), ids))
+                if stopped and not found and not ids:
+                    raise RuntimeError(stopped)             # nothing read at all: a failure, as before
                 all_postings += found
-                fetched_ok.append(company["name"])
-                if company["name"].strip().lower() not in already_checked:
-                    first_time.add(company["name"])
-                log(f"{company['name']}: {len(found)} postings fetched"
-                    + (f" (first check: only the last {window_days} days count)"
-                       if company["name"] in first_time else ""))
+                if name.strip().lower() not in already_checked:
+                    first_time.add(name)
+                if stopped:
+                    # keep and score what was read; the company is read further on the next run
+                    where = getattr(found, "stopped_at", "") or "partway"
+                    note = f"partial: stopped at {where} ({stopped[:200]})"
+                    problems.append(f"{name}: {note}")
+                    partial.append((name, note))
+                    log(f"{name}: {len(found)} postings fetched - PARTIAL, stopped at {where} ({stopped[:200]}); "
+                        "the rest is read on the next run")
+                    continue
+                fetched_ok.append(name)
+                log(f"{name}: {len(found)} postings fetched"
+                    + (f" ({found.mode})" if getattr(found, "mode", "") else "")
+                    + (f" (first check: only the last {window_days} days count)" if name in first_time else ""))
             except Exception as e:
-                problems.append(f"{company.get('name')}: {e}")
-                failed.append((company.get("name"), str(e)))
-                log(f"{company.get('name')}: FAILED to fetch after retries ({e})")
+                problems.append(f"{name}: {e}")
+                failed.append((name, str(e)))
+                log(f"{name}: FAILED to fetch ({e})")
         fetched = len(all_postings)
 
         unseen = [p for p in all_postings if p.uid not in seen]
@@ -113,9 +135,15 @@ def run(trigger: str = "manual", dry_run: bool = False, only: list = None, retry
                       f"pay top: {p.pay_top or '-'} | kept because: {why}")
             return {"status": "dry-run", "matched": matched, "new": len(fresh)}
 
-        # Only companies that were read successfully are marked as checked; a failed company keeps
-        # its first-check window (first_check_days) for the next successful read.
+        # Only companies that were read completely are marked as checked; a failed or partial company
+        # keeps its first-check window (first_check_days) for the next complete read.
         db.add_run_failures(run_id, failed)
+        db.add_run_failures(run_id, partial, kind="partial")
+        for name, state, ids in reader_saves:
+            if state is not None:
+                db.save_reader_state(name, state)
+            if ids:
+                db.add_search_ids([f"{name}|{i}" for i in ids], today)
         if retry_of:
             db.mark_failures_retried(retry_of, [c["name"] for c in companies], run_id)
         db.remember_ids(filtered_out, "filtered", today)

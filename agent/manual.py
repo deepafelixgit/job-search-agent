@@ -247,9 +247,13 @@ def _read_oracle(settings, company: dict, url: str) -> Posting:
 def _from_list(company: dict, sid: str) -> Posting:
     """Readers whose list already includes full descriptions (Atlassian, Workable)."""
     from .site_readers import run_reader
-    for p in run_reader(company):
+    found = run_reader(company)
+    for p in found:
         if p.source_id == sid:
             return p
+    if getattr(found, "error", ""):
+        raise NeedsPaste("The company's job board stopped answering before this posting was reached "
+                         f"({found.error[:120]}). Try again later, or paste the posting text.")
     raise NeedsPaste("That posting isn't on the company's job board any more (it may have closed).")
 
 

@@ -121,7 +121,11 @@ personal:
 #    jibe         -> url of a careers site that has a /api/jobs feed (iCIMS Jibe sites)
 #    amazon_jobs  -> amazon.jobs; MUST be narrowed with business_categories or must_mention
 #    workday      -> host, tenant, site (from the company's myworkdayjobs.com address)
-#    eightfold    -> url, domain (api: pcsx for Eightfold's newer version)
+#    eightfold    -> url, domain (api: pcsx for Eightfold's newer version). pcsx only, optional:
+#                    location: "United States" (the site filters the search), newest_first: true
+#                    (daily read newest first; full sweep on Sundays and after a partial read)
+#                    full_sweep: false, max_pages: 5 (for a site that allows very few requests)
+#    Optional on any company:  paused_until: "YYYY-MM-DD"   (not read until that date)
 #    oracle       -> host, site (Oracle Cloud careers)
 #    workable / rippling -> board_id
 #    apple, google, atlassian -> their own career sites (google: list of locations to search)

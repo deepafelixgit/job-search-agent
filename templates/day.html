@@ -99,12 +99,25 @@
   <div class="meta">
     {% for r in runs %}
       Run {{ loop.index }} ({{ r.trigger }}, {{ (r.started_at or '')[11:16] }}): {{ r.status }}{% if r.message %} - {{ r.message }}{% endif %}<br>
-      {% set fails = failures.get(r.id, []) %}
+      {% set all_fails = failures.get(r.id, []) %}
+      {% set partials = all_fails | selectattr('kind', 'equalto', 'partial') | list %}
+      {% set fails = all_fails | rejectattr('kind', 'equalto', 'partial') | list %}
+      {% if partials %}
+        <div class="notice" style="margin:6px 0 10px">
+          <b>Read partly: {{ partials|length }} compan{{ 'y' if partials|length == 1 else 'ies' }}</b>
+          (the site stopped answering partway; what was read is kept and scored, and the rest is read on the next run):
+          <ul style="margin:6px 0 6px 18px">
+          {% for f in partials %}
+            <li>{{ f.company }} <span class="sub">- {{ f.error[:160] }}</span></li>
+          {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
       {% if fails %}
         {% set open_fails = fails | rejectattr('retried_by') | list %}
         <div class="notice warn" style="margin:6px 0 10px">
           <b>Couldn't read {{ fails|length }} compan{{ 'y' if fails|length == 1 else 'ies' }} in this run</b>
-          (each was retried 3 times):
+          (network errors are retried; a site that says "too many requests" isn't, so we don't add to its load):
           <ul style="margin:6px 0 6px 18px">
           {% for f in fails %}
             <li>{{ f.company }}{% if f.retried_by %} <i>(retried in a later run)</i>{% endif %}
